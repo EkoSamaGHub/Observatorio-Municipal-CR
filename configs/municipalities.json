@@ -1,0 +1,17 @@
+[
+  {
+    "id": "SJ001",
+    "province": "San José",
+    "name": "Municipalidad de San José",
+    "root_url": "https://www.msj.go.cr",
+    "active": true
+  },
+
+  {
+    "id": "SJ002",
+    "province": "San José",
+    "name": "Municipalidad de Escazú",
+    "root_url": "https://www.escazu.go.cr",
+    "active": true
+  }
+]

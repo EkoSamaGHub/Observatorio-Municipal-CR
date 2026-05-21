@@ -1,0 +1,590 @@
+[
+  {
+    "id": "SJ001",
+    "province": "San José",
+    "name": "Municipalidad de San José",
+    "root_url": "https://www.msj.go.cr",
+    "active": true
+  },
+  {
+    "id": "SJ002",
+    "province": "San José",
+    "name": "Municipalidad de Escazú",
+    "root_url": "https://www.escazu.go.cr",
+    "active": true
+  },
+  {
+    "id": "SJ003",
+    "province": "San José",
+    "name": "Municipalidad de Desamparados",
+    "root_url": "https://www.desamparados.go.cr",
+    "active": true
+  },
+  {
+    "id": "SJ004",
+    "province": "San José",
+    "name": "Municipalidad de Puriscal",
+    "root_url": "https://www.puriscal.go.cr",
+    "active": true
+  },
+  {
+    "id": "SJ005",
+    "province": "San José",
+    "name": "Municipalidad de Tarrazú",
+    "root_url": "https://www.munitarrazu.go.cr",
+    "active": true
+  },
+  {
+    "id": "SJ006",
+    "province": "San José",
+    "name": "Municipalidad de Aserrí",
+    "root_url": "https://www.aserri.go.cr",
+    "active": true
+  },
+  {
+    "id": "SJ007",
+    "province": "San José",
+    "name": "Municipalidad de Mora",
+    "root_url": "https://www.mora.go.cr",
+    "active": true
+  },
+  {
+    "id": "SJ008",
+    "province": "San José",
+    "name": "Municipalidad de Goicoechea",
+    "root_url": "https://www.goicoechea.go.cr",
+    "active": true
+  },
+  {
+    "id": "SJ009",
+    "province": "San José",
+    "name": "Municipalidad de Santa Ana",
+    "root_url": "https://www.santaana.go.cr",
+    "active": true
+  },
+  {
+    "id": "SJ010",
+    "province": "San José",
+    "name": "Municipalidad de Alajuelita",
+    "root_url": "https://www.alajuelita.go.cr",
+    "active": true
+  },
+  {
+    "id": "SJ011",
+    "province": "San José",
+    "name": "Municipalidad de Vásquez de Coronado",
+    "root_url": "https://www.coromuni.go.cr",
+    "active": true
+  },
+  {
+    "id": "SJ012",
+    "province": "San José",
+    "name": "Municipalidad de Acosta",
+    "root_url": "https://www.acosta.go.cr",
+    "active": true
+  },
+  {
+    "id": "SJ013",
+    "province": "San José",
+    "name": "Municipalidad de Tibás",
+    "root_url": "https://www.tibas.go.cr",
+    "active": true
+  },
+  {
+    "id": "SJ014",
+    "province": "San José",
+    "name": "Municipalidad de Moravia",
+    "root_url": "https://www.moravia.go.cr",
+    "active": true
+  },
+  {
+    "id": "SJ015",
+    "province": "San José",
+    "name": "Municipalidad de Montes de Oca",
+    "root_url": "https://www.montesdeoca.go.cr",
+    "active": true
+  },
+  {
+    "id": "SJ016",
+    "province": "San José",
+    "name": "Municipalidad de Turrubares",
+    "root_url": "https://www.turrubares.go.cr",
+    "active": true
+  },
+  {
+    "id": "SJ017",
+    "province": "San José",
+    "name": "Municipalidad de Dota",
+    "root_url": "https://www.munidota.go.cr",
+    "active": true
+  },
+  {
+    "id": "SJ018",
+    "province": "San José",
+    "name": "Municipalidad de Curridabat",
+    "root_url": "https://www.curridabat.go.cr",
+    "active": true
+  },
+  {
+    "id": "SJ019",
+    "province": "San José",
+    "name": "Municipalidad de Pérez Zeledón",
+    "root_url": "https://www.perezzeledon.go.cr",
+    "active": true
+  },
+  {
+    "id": "SJ020",
+    "province": "San José",
+    "name": "Municipalidad de León Cortés",
+    "root_url": "https://www.munileco.go.cr",
+    "active": true
+  },
+  {
+    "id": "AL001",
+    "province": "Alajuela",
+    "name": "Municipalidad de Alajuela",
+    "root_url": "https://www.munialajuela.go.cr",
+    "active": true
+  },
+  {
+    "id": "AL002",
+    "province": "Alajuela",
+    "name": "Municipalidad de San Ramón",
+    "root_url": "https://www.munisanramon.go.cr",
+    "active": true
+  },
+  {
+    "id": "AL003",
+    "province": "Alajuela",
+    "name": "Municipalidad de Grecia",
+    "root_url": "https://www.grecia.go.cr",
+    "active": true
+  },
+  {
+    "id": "AL004",
+    "province": "Alajuela",
+    "name": "Municipalidad de San Mateo",
+    "root_url": "https://www.sanmateo.go.cr",
+    "active": true
+  },
+  {
+    "id": "AL005",
+    "province": "Alajuela",
+    "name": "Municipalidad de Atenas",
+    "root_url": "https://www.muniatenas.go.cr",
+    "active": true
+  },
+  {
+    "id": "AL006",
+    "province": "Alajuela",
+    "name": "Municipalidad de Naranjo",
+    "root_url": "https://www.naranjo.go.cr",
+    "active": true
+  },
+  {
+    "id": "AL007",
+    "province": "Alajuela",
+    "name": "Municipalidad de Palmares",
+    "root_url": "https://www.munipalmares.go.cr",
+    "active": true
+  },
+  {
+    "id": "AL008",
+    "province": "Alajuela",
+    "name": "Municipalidad de Poás",
+    "root_url": "https://www.munipoas.go.cr",
+    "active": true
+  },
+  {
+    "id": "AL009",
+    "province": "Alajuela",
+    "name": "Municipalidad de Orotina",
+    "root_url": "https://www.muniorotina.go.cr",
+    "active": true
+  },
+  {
+    "id": "AL010",
+    "province": "Alajuela",
+    "name": "Municipalidad de San Carlos",
+    "root_url": "https://www.sancarlos.go.cr",
+    "active": true
+  },
+  {
+    "id": "AL011",
+    "province": "Alajuela",
+    "name": "Municipalidad de Zarcero",
+    "root_url": "https://www.zarcero.go.cr",
+    "active": true
+  },
+  {
+    "id": "AL012",
+    "province": "Alajuela",
+    "name": "Municipalidad de Valverde Vega (Sarchí)",
+    "root_url": "https://www.munisarchi.go.cr",
+    "active": true
+  },
+  {
+    "id": "AL013",
+    "province": "Alajuela",
+    "name": "Municipalidad de Upala",
+    "root_url": "https://www.upala.go.cr",
+    "active": true
+  },
+  {
+    "id": "AL014",
+    "province": "Alajuela",
+    "name": "Municipalidad de Los Chiles",
+    "root_url": "https://www.loschiles.go.cr",
+    "active": true
+  },
+  {
+    "id": "AL015",
+    "province": "Alajuela",
+    "name": "Municipalidad de Guatuso",
+    "root_url": "https://www.guatuso.go.cr",
+    "active": true
+  },
+  {
+    "id": "AL016",
+    "province": "Alajuela",
+    "name": "Municipalidad de Río Cuarto",
+    "root_url": "https://www.riocuarto.go.cr",
+    "active": true
+  },
+  {
+    "id": "CA001",
+    "province": "Cartago",
+    "name": "Municipalidad de Cartago",
+    "root_url": "https://www.muni-carta.go.cr",
+    "active": true
+  },
+  {
+    "id": "CA002",
+    "province": "Cartago",
+    "name": "Municipalidad de Paraíso",
+    "root_url": "https://www.muniparaiso.go.cr",
+    "active": true
+  },
+  {
+    "id": "CA003",
+    "province": "Cartago",
+    "name": "Municipalidad de La Unión",
+    "root_url": "https://www.munlaunion.go.cr",
+    "active": true
+  },
+  {
+    "id": "CA004",
+    "province": "Cartago",
+    "name": "Municipalidad de Jiménez",
+    "root_url": "https://www.munijimenez.go.cr",
+    "active": true
+  },
+  {
+    "id": "CA005",
+    "province": "Cartago",
+    "name": "Municipalidad de Turrialba",
+    "root_url": "https://www.muniturrialba.go.cr",
+    "active": true
+  },
+  {
+    "id": "CA006",
+    "province": "Cartago",
+    "name": "Municipalidad de Alvarado",
+    "root_url": "https://www.munialvarado.go.cr",
+    "active": true
+  },
+  {
+    "id": "CA007",
+    "province": "Cartago",
+    "name": "Municipalidad de Oreamuno",
+    "root_url": "https://www.oreamuno.go.cr",
+    "active": true
+  },
+  {
+    "id": "CA008",
+    "province": "Cartago",
+    "name": "Municipalidad de El Guarco",
+    "root_url": "https://www.elguarco.go.cr",
+    "active": true
+  },
+  {
+    "id": "HE001",
+    "province": "Heredia",
+    "name": "Municipalidad de Heredia",
+    "root_url": "https://www.heredia.go.cr",
+    "active": true
+  },
+  {
+    "id": "HE002",
+    "province": "Heredia",
+    "name": "Municipalidad de Barva",
+    "root_url": "https://www.barva.go.cr",
+    "active": true
+  },
+  {
+    "id": "HE003",
+    "province": "Heredia",
+    "name": "Municipalidad de Santo Domingo",
+    "root_url": "https://www.santodomingo.go.cr",
+    "active": true
+  },
+  {
+    "id": "HE004",
+    "province": "Heredia",
+    "name": "Municipalidad de Santa Bárbara",
+    "root_url": "https://www.santabarbara.go.cr",
+    "active": true
+  },
+  {
+    "id": "HE005",
+    "province": "Heredia",
+    "name": "Municipalidad de San Rafael",
+    "root_url": "https://www.munisrh.go.cr",
+    "active": true
+  },
+  {
+    "id": "HE006",
+    "province": "Heredia",
+    "name": "Municipalidad de San Isidro",
+    "root_url": "https://www.sanisidro.go.cr",
+    "active": true
+  },
+  {
+    "id": "HE007",
+    "province": "Heredia",
+    "name": "Municipalidad de Belén",
+    "root_url": "https://www.belen.go.cr",
+    "active": true
+  },
+  {
+    "id": "HE008",
+    "province": "Heredia",
+    "name": "Municipalidad de Flores",
+    "root_url": "https://www.flores.go.cr",
+    "active": true
+  },
+  {
+    "id": "HE009",
+    "province": "Heredia",
+    "name": "Municipalidad de San Pablo",
+    "root_url": "https://www.munisanpablo.go.cr",
+    "active": true
+  },
+  {
+    "id": "HE010",
+    "province": "Heredia",
+    "name": "Municipalidad de Sarapiquí",
+    "root_url": "https://www.sarapiqui.go.cr",
+    "active": true
+  },
+  {
+    "id": "GU001",
+    "province": "Guanacaste",
+    "name": "Municipalidad de Liberia",
+    "root_url": "https://www.muniliberia.go.cr",
+    "active": true
+  },
+  {
+    "id": "GU002",
+    "province": "Guanacaste",
+    "name": "Municipalidad de Nicoya",
+    "root_url": "https://www.nicoya.go.cr",
+    "active": true
+  },
+  {
+    "id": "GU003",
+    "province": "Guanacaste",
+    "name": "Municipalidad de Santa Cruz",
+    "root_url": "https://www.santacruz.go.cr",
+    "active": true
+  },
+  {
+    "id": "GU004",
+    "province": "Guanacaste",
+    "name": "Municipalidad de Bagaces",
+    "root_url": "https://www.bagaces.go.cr",
+    "active": true
+  },
+  {
+    "id": "GU005",
+    "province": "Guanacaste",
+    "name": "Municipalidad de Carrillo",
+    "root_url": "https://www.municarrillo.go.cr",
+    "active": true
+  },
+  {
+    "id": "GU006",
+    "province": "Guanacaste",
+    "name": "Municipalidad de Cañas",
+    "root_url": "https://www.canas.go.cr",
+    "active": true
+  },
+  {
+    "id": "GU007",
+    "province": "Guanacaste",
+    "name": "Municipalidad de Abangares",
+    "root_url": "https://www.abangares.go.cr",
+    "active": true
+  },
+  {
+    "id": "GU008",
+    "province": "Guanacaste",
+    "name": "Municipalidad de Tilarán",
+    "root_url": "https://www.tilaran.go.cr",
+    "active": true
+  },
+  {
+    "id": "GU009",
+    "province": "Guanacaste",
+    "name": "Municipalidad de Nandayure",
+    "root_url": "https://www.nandayure.go.cr",
+    "active": true
+  },
+  {
+    "id": "GU010",
+    "province": "Guanacaste",
+    "name": "Municipalidad de La Cruz",
+    "root_url": "https://www.munilacruz.go.cr",
+    "active": true
+  },
+  {
+    "id": "GU011",
+    "province": "Guanacaste",
+    "name": "Municipalidad de Hojancha",
+    "root_url": "https://www.hojancha.go.cr",
+    "active": true
+  },
+  {
+    "id": "PU001",
+    "province": "Puntarenas",
+    "name": "Municipalidad de Puntarenas",
+    "root_url": "https://www.municipalidadpuntarenas.go.cr",
+    "active": true
+  },
+  {
+    "id": "PU002",
+    "province": "Puntarenas",
+    "name": "Municipalidad de Esparza",
+    "root_url": "https://www.esparza.go.cr",
+    "active": true
+  },
+  {
+    "id": "PU003",
+    "province": "Puntarenas",
+    "name": "Municipalidad de Buenos Aires",
+    "root_url": "https://www.buenosaires.go.cr",
+    "active": true
+  },
+  {
+    "id": "PU004",
+    "province": "Puntarenas",
+    "name": "Municipalidad de Montes de Oro",
+    "root_url": "https://www.montesdeoro.go.cr",
+    "active": true
+  },
+  {
+    "id": "PU005",
+    "province": "Puntarenas",
+    "name": "Municipalidad de Osa",
+    "root_url": "https://www.osa.go.cr",
+    "active": true
+  },
+  {
+    "id": "PU006",
+    "province": "Puntarenas",
+    "name": "Municipalidad de Quepos",
+    "root_url": "https://www.quepos.go.cr",
+    "active": true
+  },
+  {
+    "id": "PU007",
+    "province": "Puntarenas",
+    "name": "Municipalidad de Golfito",
+    "root_url": "https://www.golfito.go.cr",
+    "active": true
+  },
+  {
+    "id": "PU008",
+    "province": "Puntarenas",
+    "name": "Municipalidad de Coto Brus",
+    "root_url": "https://www.cotobrus.go.cr",
+    "active": true
+  },
+  {
+    "id": "PU009",
+    "province": "Puntarenas",
+    "name": "Municipalidad de Parrita",
+    "root_url": "https://www.parrita.go.cr",
+    "active": true
+  },
+  {
+    "id": "PU010",
+    "province": "Puntarenas",
+    "name": "Municipalidad de Corredores",
+    "root_url": "https://www.corredores.go.cr",
+    "active": true
+  },
+  {
+    "id": "PU011",
+    "province": "Puntarenas",
+    "name": "Municipalidad de Garabito",
+    "root_url": "https://www.garabito.go.cr",
+    "active": true
+  },
+  {
+    "id": "PU012",
+    "province": "Puntarenas",
+    "name": "Municipalidad de Monteverde",
+    "root_url": "https://www.monteverde.go.cr",
+    "active": true
+  },
+  {
+    "id": "PU013",
+    "province": "Puntarenas",
+    "name": "Municipalidad de Puerto Jiménez",
+    "root_url": "https://www.munipuertojimenez.go.cr",
+    "active": true
+  },
+  {
+    "id": "LI001",
+    "province": "Limón",
+    "name": "Municipalidad de Limón",
+    "root_url": "https://www.munilimon.go.cr",
+    "active": true
+  },
+  {
+    "id": "LI002",
+    "province": "Limón",
+    "name": "Municipalidad de Pococí",
+    "root_url": "https://www.pococi.go.cr",
+    "active": true
+  },
+  {
+    "id": "LI003",
+    "province": "Limón",
+    "name": "Municipalidad de Siquirres",
+    "root_url": "https://www.siquirres.go.cr",
+    "active": true
+  },
+  {
+    "id": "LI004",
+    "province": "Limón",
+    "name": "Municipalidad de Talamanca",
+    "root_url": "https://www.talamanca.go.cr",
+    "active": true
+  },
+  {
+    "id": "LI005",
+    "province": "Limón",
+    "name": "Municipalidad de Matina",
+    "root_url": "https://www.matina.go.cr",
+    "active": true
+  },
+  {
+    "id": "LI006",
+    "province": "Limón",
+    "name": "Municipalidad de Guácimo",
+    "root_url": "https://www.guacimo.go.cr",
+    "active": true
+  }
+]

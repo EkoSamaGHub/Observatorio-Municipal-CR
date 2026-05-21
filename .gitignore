@@ -1,0 +1,29 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+.env.local
+.env.production
+
+# Data directories
+data/
+output/
+
+# Logs
+logs/
+
+# Database files
+*.sqlite
+*.db
+
+# Node / Next.js
+node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+frontend/.env.production
+
+# OS
+.DS_Store
+Thumbs.db

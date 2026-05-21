@@ -1,0 +1,91 @@
+{
+  "nav": {
+    "inicio": "Inicio",
+    "municipalidades": "Municipalidades",
+    "documentos": "Documentos",
+    "licitaciones": "Licitaciones",
+    "cambios": "Cambios Detectados",
+    "busqueda": "Búsqueda",
+    "transparencia": "Transparencia"
+  },
+  "inicio": {
+    "titulo": "Observatorio Municipal de Costa Rica",
+    "subtitulo": "Monitoreo de transparencia, documentos y licitaciones de las 84 municipalidades",
+    "total_municipalidades": "Municipalidades",
+    "total_documentos": "Documentos Indexados",
+    "total_cambios": "Cambios Detectados",
+    "ultima_actualizacion": "Última actualización",
+    "ver_todas": "Ver todas las municipalidades",
+    "municipalidades_activas": "Municipalidades activas",
+    "sin_datos": "Sin datos aún. Ejecute el pipeline para comenzar."
+  },
+  "municipalidades": {
+    "titulo": "Municipalidades",
+    "subtitulo": "Las 84 municipalidades de Costa Rica",
+    "filtrar_provincia": "Filtrar por provincia",
+    "todas_provincias": "Todas las provincias",
+    "paginas_crawleadas": "Páginas indexadas",
+    "documentos": "Documentos",
+    "cambios": "Cambios",
+    "ultimo_rastreo": "Último rastreo",
+    "sin_rastreo": "Sin rastrear",
+    "ver_perfil": "Ver perfil",
+    "buscar": "Buscar municipalidad..."
+  },
+  "perfil": {
+    "paginas": "Páginas Indexadas",
+    "documentos": "Documentos",
+    "cambios_detectados": "Cambios Detectados",
+    "ultimo_rastreo": "Último Rastreo",
+    "sin_rastreo": "Sin rastrear aún",
+    "sitio_oficial": "Sitio Oficial",
+    "provincia": "Provincia",
+    "tab_paginas": "Páginas",
+    "tab_documentos": "Documentos",
+    "tab_cambios": "Cambios",
+    "sin_paginas": "No se han indexado páginas aún.",
+    "sin_documentos": "No se han encontrado documentos aún.",
+    "sin_cambios": "No se han detectado cambios aún.",
+    "profundidad": "Profundidad",
+    "tipo": "Tipo",
+    "estado": "Estado",
+    "detectado": "Detectado"
+  },
+  "documentos": {
+    "titulo": "Documentos",
+    "subtitulo": "Biblioteca de documentos municipales",
+    "filtrar_tipo": "Filtrar por tipo",
+    "todos_tipos": "Todos los tipos",
+    "municipalidad": "Municipalidad",
+    "tipo": "Tipo",
+    "primera_vez": "Primera vez visto",
+    "ultima_vez": "Última vez visto",
+    "abrir": "Abrir"
+  },
+  "cambios": {
+    "titulo": "Cambios Detectados",
+    "subtitulo": "Historial de cambios en páginas municipales",
+    "municipalidad": "Municipalidad",
+    "pagina": "Página",
+    "detectado": "Detectado",
+    "sin_cambios": "No se han detectado cambios aún."
+  },
+  "busqueda": {
+    "titulo": "Búsqueda",
+    "placeholder": "Buscar en todas las municipalidades...",
+    "resultados": "resultados encontrados",
+    "sin_resultados": "No se encontraron resultados para",
+    "tipo_pagina": "Página",
+    "tipo_documento": "Documento",
+    "filtrar_tipo": "Tipo",
+    "todos": "Todos"
+  },
+  "comun": {
+    "cargando": "Cargando...",
+    "error": "Error al cargar los datos",
+    "volver": "Volver",
+    "ver_mas": "Ver más",
+    "pagina": "Página",
+    "de": "de"
+  }
+}
