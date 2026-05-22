@@ -14,6 +14,25 @@ async function fetchActive(): Promise<ActiveRun> {
   }
 }
 
+function ProgressBar({
+  pct,
+  color,
+}: {
+  pct: number;
+  color: "blue" | "emerald";
+}) {
+  const from = color === "blue" ? "from-blue-500" : "from-emerald-500";
+  const to = color === "blue" ? "to-blue-400" : "to-emerald-400";
+  return (
+    <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+      <div
+        className={`h-2.5 rounded-full bg-gradient-to-r ${from} ${to} transition-all duration-700`}
+        style={{ width: `${Math.max(pct, 1)}%` }}
+      />
+    </div>
+  );
+}
+
 export default function CrawlProgress() {
   const [data, setData] = useState<ActiveRun | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -24,7 +43,6 @@ export default function CrawlProgress() {
     return () => clearInterval(poll);
   }, []);
 
-  // Tick elapsed seconds every second while active
   useEffect(() => {
     if (!data?.active || !data.started_at) return;
     const tick = setInterval(() => {
@@ -44,10 +62,13 @@ export default function CrawlProgress() {
     );
   }
 
-  const done = data.municipalities_done ?? 0;
   const total = data.municipalities_total ?? 84;
-  const pct = Math.round((done / total) * 100);
+  const done = data.municipalities_done ?? 0;
+  const withData = data.municipalities_with_data ?? 0;
   const pages = data.pages_crawled ?? 0;
+
+  const historicalPct = Math.round((withData / total) * 100);
+  const sessionPct = Math.round((done / total) * 100);
 
   const hrs = Math.floor(elapsed / 3600);
   const mins = Math.floor((elapsed % 3600) / 60);
@@ -60,7 +81,7 @@ export default function CrawlProgress() {
 
   return (
     <div className="bg-white border border-blue-200 rounded-xl overflow-hidden shadow-sm">
-      {/* Header row */}
+      {/* Header */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-blue-100 bg-blue-50">
         <div className="flex items-center gap-2.5">
           <span className="relative flex h-2.5 w-2.5">
@@ -70,25 +91,33 @@ export default function CrawlProgress() {
           <span className="text-sm font-semibold text-blue-900">Rastreo en progreso</span>
         </div>
         <div className="flex items-center gap-4 text-xs text-blue-700 font-medium">
-          <span>{done} / {total} municipalidades</span>
-          <span className="text-blue-300">·</span>
-          <span>{pages.toLocaleString("es-CR")} páginas</span>
+          <span>{pages.toLocaleString("es-CR")} páginas esta sesión</span>
           <span className="text-blue-300">·</span>
           <span>{elapsedStr} transcurridos</span>
         </div>
       </div>
 
-      {/* Progress bar */}
-      <div className="px-5 py-4 space-y-3">
-        <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
-          <span>{pct}% completado</span>
-          <span>{total - done} restantes</span>
+      <div className="px-5 py-4 space-y-4">
+        {/* Historical coverage bar */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-medium text-slate-700">Cobertura histórica</span>
+            <span className="text-slate-500">
+              {withData} / {total} municipalidades &nbsp;·&nbsp; {historicalPct}%
+            </span>
+          </div>
+          <ProgressBar pct={historicalPct} color="emerald" />
         </div>
-        <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
-          <div
-            className="h-3 rounded-full bg-gradient-to-r from-blue-500 to-blue-400 transition-all duration-700"
-            style={{ width: `${Math.max(pct, 1)}%` }}
-          />
+
+        {/* Current run bar */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-medium text-slate-700">Esta sesión</span>
+            <span className="text-slate-500">
+              {done} / {total} municipalidades &nbsp;·&nbsp; {sessionPct}%
+            </span>
+          </div>
+          <ProgressBar pct={sessionPct} color="blue" />
         </div>
 
         {/* Current URL */}

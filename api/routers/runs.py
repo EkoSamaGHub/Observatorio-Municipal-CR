@@ -44,6 +44,10 @@ def get_active_run(db=Depends(get_db)):
         (started_at,),
     ).fetchone()["n"]
 
+    munis_with_data = db.execute(
+        "SELECT COUNT(DISTINCT municipality_id) AS n FROM pages"
+    ).fetchone()["n"]
+
     pages_crawled = db.execute(
         "SELECT COUNT(*) AS n FROM pages WHERE last_crawled >= %s",
         (started_at,),
@@ -59,6 +63,7 @@ def get_active_run(db=Depends(get_db)):
         "run_id": run["id"],
         "started_at": started_at,
         "municipalities_done": munis_done,
+        "municipalities_with_data": munis_with_data,
         "municipalities_total": 84,
         "pages_crawled": pages_crawled,
         "current_municipality": latest["municipality_id"] if latest else None,

@@ -59,6 +59,7 @@ export interface ActiveRun {
   run_id?: number;
   started_at?: string;
   municipalities_done?: number;
+  municipalities_with_data?: number;
   municipalities_total?: number;
   pages_crawled?: number;
   current_municipality?: string | null;
