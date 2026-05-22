@@ -36,6 +36,21 @@ def run_pipeline(
     conn.commit()
     conn.close()
 
+    def _close_run():
+        try:
+            c = get_connection()
+            c.execute(
+                "UPDATE crawl_runs SET finished_at=%s WHERE id=%s AND finished_at IS NULL",
+                (_now(), run_id),
+            )
+            c.commit()
+            c.close()
+        except Exception:
+            pass
+
+    import atexit
+    atexit.register(_close_run)
+
     municipalities = load_municipalities()
     if municipality_ids:
         municipalities = [m for m in municipalities if m["id"] in municipality_ids]
