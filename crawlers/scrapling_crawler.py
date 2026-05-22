@@ -101,6 +101,8 @@ class ScraplingCrawler(BaseCrawler):
         visited: set[str] = set(known_urls)
         results: list[CrawlResult] = []
 
+        norm_root = normalize_url(root_url)
+
         # Build queue: root → sitemap URLs → stored link graph edges
         queue: deque[tuple[str, int]] = deque()
         queue.append((root_url, 0))
@@ -115,8 +117,14 @@ class ScraplingCrawler(BaseCrawler):
             if norm not in visited:
                 queue.append((norm, 1))
 
+        # If root is already known and we have no seed links, force-fetch root
+        # to extract fresh outgoing links and unblock discovery on return visits.
+        if norm_root in visited and not seed_links:
+            visited.discard(norm_root)
+
         sitemap_total = len(sitemap_urls)
         fetched = 0
+        skipped = 0
         terminated_by = "complete"
 
         while queue:
@@ -128,6 +136,7 @@ class ScraplingCrawler(BaseCrawler):
             normalized = normalize_url(url)
 
             if normalized in visited:
+                skipped += 1
                 continue
             if should_ignore(normalized):
                 continue
@@ -158,7 +167,7 @@ class ScraplingCrawler(BaseCrawler):
 
         logger.info(
             f"[{municipality_id}] discover complete — fetched={fetched} "
-            f"skipped_known={len(known_urls)} terminated_by={terminated_by} "
+            f"skipped_known={skipped} terminated_by={terminated_by} "
             f"sitemap_total={sitemap_total} completeness={completeness:.1f}%"
         )
 
