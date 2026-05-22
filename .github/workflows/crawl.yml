@@ -14,10 +14,6 @@ on:
         options:
           - discover
           - monitor
-      ids:
-        description: "Municipality IDs (space-separated, leave empty for all)"
-        required: false
-        default: ""
       max_pages:
         description: "Max pages per municipality"
         required: false
