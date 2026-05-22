@@ -2,7 +2,7 @@ name: Nightly Crawl
 
 on:
   schedule:
-    # Runs at 02:00 UTC every day (10pm Costa Rica time, CR is UTC-6)
+    # 02:00 UTC daily (10pm Costa Rica time, CR is UTC-6)
     - cron: "0 2 * * *"
   workflow_dispatch:
     inputs:
@@ -21,29 +21,100 @@ on:
       max_pages:
         description: "Max pages per municipality"
         required: false
-        default: "500"
+        default: "200"
+
+concurrency:
+  group: crawl
+  cancel-in-progress: false
+
+# ── Scheduled run: 3 parallel province batches ────────────────────────────────
+# Each batch covers ~28 municipalities at 200 pages × 1.0 s ≈ 1.6 h — safe
+# within the 3-hour timeout. All three run in parallel, so the full 84-muni
+# sweep completes in ~1.6 h instead of the previous ~17 h serial run.
 
 jobs:
-  crawl:
+  crawl-sj-al:
+    name: "Batch 1 — San José + Alajuela"
+    if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 360
-
+    timeout-minutes: 180
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
+      - run: pip install --upgrade pip && pip install -r requirements.txt
+      - run: python -c "from configs.init_db import init_db; init_db()"
+      - name: Crawl
+        run: |
+          python pipeline.py --mode discover --max-pages 200 --delay 1.0 --ids \
+            SJ001 SJ002 SJ003 SJ004 SJ005 SJ006 SJ007 SJ008 SJ009 SJ010 \
+            SJ011 SJ012 SJ013 SJ014 SJ015 SJ016 SJ017 SJ018 SJ019 SJ020 \
+            AL001 AL002 AL003 AL004 AL005 AL006 AL007 AL008
 
-      - name: Install dependencies
-        run: pip install --upgrade pip && pip install -r requirements.txt
+  crawl-al-ca-he:
+    name: "Batch 2 — Alajuela (cont.) + Cartago + Heredia"
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install --upgrade pip && pip install -r requirements.txt
+      - run: python -c "from configs.init_db import init_db; init_db()"
+      - name: Crawl
+        run: |
+          python pipeline.py --mode discover --max-pages 200 --delay 1.0 --ids \
+            AL009 AL010 AL011 AL012 AL013 AL014 AL015 AL016 \
+            CA001 CA002 CA003 CA004 CA005 CA006 CA007 CA008 \
+            HE001 HE002 HE003 HE004 HE005 HE006 HE007 HE008 HE009 HE010
 
+  crawl-gu-pu-li:
+    name: "Batch 3 — Guanacaste + Puntarenas + Limón"
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install --upgrade pip && pip install -r requirements.txt
+      - run: python -c "from configs.init_db import init_db; init_db()"
+      - name: Crawl
+        run: |
+          python pipeline.py --mode discover --max-pages 200 --delay 1.0 --ids \
+            GU001 GU002 GU003 GU004 GU005 GU006 GU007 GU008 GU009 GU010 GU011 \
+            PU001 PU002 PU003 PU004 PU005 PU006 PU007 PU008 PU009 PU010 PU011 PU012 PU013 \
+            LI001 LI002 LI003 LI004 LI005 LI006
+
+# ── Manual dispatch: single flexible job ─────────────────────────────────────
+
+  crawl-manual:
+    name: "Manual crawl"
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install --upgrade pip && pip install -r requirements.txt
       - name: Verify imports
         run: |
           python -c "
@@ -53,18 +124,15 @@ jobs:
           print(f'Backend: {BACKEND}')
           print('All imports OK')
           "
-
-      - name: Initialize database schema
-        run: python -c "from configs.init_db import init_db; init_db()"
-
+      - run: python -c "from configs.init_db import init_db; init_db()"
       - name: Run crawl pipeline
         run: |
           MODE="${{ github.event.inputs.mode || 'discover' }}"
-          MAX_PAGES="${{ github.event.inputs.max_pages || '500' }}"
+          MAX_PAGES="${{ github.event.inputs.max_pages || '200' }}"
           IDS="${{ github.event.inputs.ids }}"
 
           if [ -n "$IDS" ]; then
-            python pipeline.py --mode "$MODE" --max-pages "$MAX_PAGES" --delay 1.5 --ids $IDS
+            python pipeline.py --mode "$MODE" --max-pages "$MAX_PAGES" --delay 1.0 --ids $IDS
           else
-            python pipeline.py --mode "$MODE" --max-pages "$MAX_PAGES" --delay 1.5
+            python pipeline.py --mode "$MODE" --max-pages "$MAX_PAGES" --delay 1.0
           fi
