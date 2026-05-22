@@ -80,6 +80,26 @@
     "filtrar_tipo": "Tipo",
     "todos": "Todos"
   },
+  "directorio": {
+    "titulo": "Directorio de Municipalidades",
+    "subtitulo": "Las 84 municipalidades de Costa Rica organizadas por provincia",
+    "sitio_oficial": "Sitio oficial",
+    "ver_perfil": "Ver perfil",
+    "municipalidades": "municipalidades"
+  },
+  "reportes": {
+    "titulo": "Reportes de Seguridad",
+    "subtitulo": "SSL y vencimiento de dominios de las 84 municipalidades",
+    "municipalidad": "Municipalidad",
+    "provincia": "Provincia",
+    "dominio": "Dominio",
+    "grado_ssl": "Grado SSL",
+    "vence_cert": "Vence certificado",
+    "vence_dominio": "Vence dominio",
+    "revisado": "Revisado",
+    "sin_datos": "Sin datos. Ejecute scripts/check_ssl.py y scripts/check_domains.py para poblar.",
+    "advertencia": "Con advertencias"
+  },
   "comun": {
     "cargando": "Cargando...",
     "error": "Error al cargar los datos",

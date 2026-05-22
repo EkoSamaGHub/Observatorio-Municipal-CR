@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import documents, municipalities, runs, search
+from api.routers import documents, municipalities, reports, runs, search
 
 app = FastAPI(
     title="MUNI84CR API",
@@ -22,6 +22,7 @@ app.include_router(municipalities.router)
 app.include_router(documents.router)
 app.include_router(runs.router)
 app.include_router(search.router)
+app.include_router(reports.router)
 
 
 @app.get("/", tags=["health"])

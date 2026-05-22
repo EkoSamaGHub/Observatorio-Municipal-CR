@@ -73,3 +73,28 @@ class PaginatedResponse(BaseModel):
     page: int
     page_size: int
     results: list
+
+
+class SSLReport(BaseModel):
+    id: int
+    municipality_id: str
+    municipality_name: str
+    province: str
+    domain: str
+    grade: Optional[str] = None
+    cert_expiry: Optional[str] = None
+    ip_address: Optional[str] = None
+    has_warnings: bool = False
+    checked_at: str
+
+
+class DomainExpiry(BaseModel):
+    id: int
+    municipality_id: str
+    municipality_name: str
+    province: str
+    domain: str
+    registrar: Optional[str] = None
+    expiry_date: Optional[str] = None
+    creation_date: Optional[str] = None
+    checked_at: str

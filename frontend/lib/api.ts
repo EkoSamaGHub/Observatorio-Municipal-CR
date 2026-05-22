@@ -66,6 +66,31 @@ export interface ActiveRun {
   current_url?: string | null;
 }
 
+export interface SSLReport {
+  id: number;
+  municipality_id: string;
+  municipality_name: string;
+  province: string;
+  domain: string;
+  grade: string | null;
+  cert_expiry: string | null;
+  ip_address: string | null;
+  has_warnings: boolean;
+  checked_at: string;
+}
+
+export interface DomainExpiry {
+  id: number;
+  municipality_id: string;
+  municipality_name: string;
+  province: string;
+  domain: string;
+  registrar: string | null;
+  expiry_date: string | null;
+  creation_date: string | null;
+  checked_at: string;
+}
+
 export interface SearchResult {
   type: string;
   municipality_id: string;
@@ -112,4 +137,7 @@ export const api = {
     apiFetch<{ total: number; results: SearchResult[] }>(
       `/search?q=${encodeURIComponent(q)}${type ? `&type=${type}` : ""}`
     ),
+
+  getSSLReports: () => apiFetch<SSLReport[]>("/reports/ssl"),
+  getDomainExpiry: () => apiFetch<DomainExpiry[]>("/reports/domains"),
 };

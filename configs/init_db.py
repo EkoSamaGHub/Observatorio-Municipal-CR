@@ -91,10 +91,39 @@ def _init_sqlite(conn) -> None:
     )
     """)
 
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS ssl_reports (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        municipality_id TEXT    NOT NULL,
+        domain          TEXT    NOT NULL,
+        grade           TEXT,
+        cert_expiry     TEXT,
+        ip_address      TEXT,
+        has_warnings    INTEGER DEFAULT 0,
+        checked_at      TEXT    NOT NULL,
+        UNIQUE(municipality_id, domain)
+    )
+    """)
+
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS domain_expiry (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        municipality_id TEXT    NOT NULL,
+        domain          TEXT    NOT NULL,
+        registrar       TEXT,
+        expiry_date     TEXT,
+        creation_date   TEXT,
+        checked_at      TEXT    NOT NULL,
+        UNIQUE(municipality_id, domain)
+    )
+    """)
+
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pages_municipality ON pages(municipality_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_municipality ON documents(municipality_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_diffs_municipality ON page_diffs(municipality_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_page_links_source ON page_links(source_url)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ssl_municipality ON ssl_reports(municipality_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_domain_municipality ON domain_expiry(municipality_id)")
 
 
 def _init_postgres(conn) -> None:
@@ -168,13 +197,42 @@ def _init_postgres(conn) -> None:
     )
     """)
 
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS ssl_reports (
+        id              BIGSERIAL PRIMARY KEY,
+        municipality_id TEXT      NOT NULL,
+        domain          TEXT      NOT NULL,
+        grade           TEXT,
+        cert_expiry     TEXT,
+        ip_address      TEXT,
+        has_warnings    INTEGER   DEFAULT 0,
+        checked_at      TEXT      NOT NULL,
+        UNIQUE(municipality_id, domain)
+    )
+    """)
+
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS domain_expiry (
+        id              BIGSERIAL PRIMARY KEY,
+        municipality_id TEXT      NOT NULL,
+        domain          TEXT      NOT NULL,
+        registrar       TEXT,
+        expiry_date     TEXT,
+        creation_date   TEXT,
+        checked_at      TEXT      NOT NULL,
+        UNIQUE(municipality_id, domain)
+    )
+    """)
+
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pages_municipality ON pages(municipality_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_municipality ON documents(municipality_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_diffs_municipality ON page_diffs(municipality_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_page_links_source ON page_links(source_url)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ssl_municipality ON ssl_reports(municipality_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_domain_municipality ON domain_expiry(municipality_id)")
 
     # Resync sequences in case rows were inserted with explicit IDs (e.g. after migration)
-    for table in ["crawl_runs", "pages", "documents", "page_diffs", "page_links", "dev_sessions"]:
+    for table in ["crawl_runs", "pages", "documents", "page_diffs", "page_links", "dev_sessions", "ssl_reports", "domain_expiry"]:
         conn.execute(
             f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
             f"COALESCE(MAX(id), 0) + 1, false) FROM {table}"
