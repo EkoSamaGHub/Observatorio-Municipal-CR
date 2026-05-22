@@ -173,6 +173,13 @@ def _init_postgres(conn) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_diffs_municipality ON page_diffs(municipality_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_page_links_source ON page_links(source_url)")
 
+    # Resync sequences in case rows were inserted with explicit IDs (e.g. after migration)
+    for table in ["crawl_runs", "pages", "documents", "page_diffs", "page_links", "dev_sessions"]:
+        conn.execute(
+            f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
+            f"COALESCE(MAX(id), 0) + 1, false) FROM {table}"
+        )
+
 
 if __name__ == "__main__":
     init_db()
