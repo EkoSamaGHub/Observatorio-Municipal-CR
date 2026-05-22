@@ -42,10 +42,17 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install --upgrade pip && pip install -r requirements.txt
 
-      - name: Install Playwright browsers
-        run: playwright install chromium --with-deps
+      - name: Verify imports
+        run: |
+          python -c "
+          from configs.db import get_connection, BACKEND
+          from crawlers.scrapling_crawler import ScraplingCrawler
+          from modules.store import load_known_state, store_results
+          print(f'Backend: {BACKEND}')
+          print('All imports OK')
+          "
 
       - name: Initialize database schema
         run: python -c "from configs.init_db import init_db; init_db()"
