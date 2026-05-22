@@ -12,6 +12,10 @@ output/
 
 # Logs
 logs/
+*.log
+
+# Scratch / dev files
+test.py
 
 # Database files
 *.sqlite
