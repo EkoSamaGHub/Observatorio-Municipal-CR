@@ -126,7 +126,18 @@ class _PgConn:
     def __init__(self, url: str):
         import psycopg2
         import psycopg2.extras
-        self._c = psycopg2.connect(url, cursor_factory=psycopg2.extras.RealDictCursor)
+        from urllib.parse import urlparse, parse_qs
+        r = urlparse(url)
+        qs = {k: v[0] for k, v in parse_qs(r.query).items()}
+        self._c = psycopg2.connect(
+            host=r.hostname,
+            port=r.port,
+            dbname=(r.path or "/tsdb").lstrip("/"),
+            user=r.username,
+            password=r.password,
+            sslmode=qs.get("sslmode", "prefer"),
+            cursor_factory=psycopg2.extras.RealDictCursor,
+        )
 
     def execute(self, sql: str, params=None) -> _PgCursor:
         cur = _PgCursor(self._c.cursor())
