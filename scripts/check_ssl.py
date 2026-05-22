@@ -97,14 +97,23 @@ def extract_results(data: dict) -> dict:
     has_warnings = bool(ep.get("hasWarnings", False))
 
     cert_expiry = None
+    # Try details.cert.notAfter first, fall back to details.cert.subject expiry fields
     details = ep.get("details") or {}
     cert = details.get("cert") or {}
-    not_after = cert.get("notAfter")
+    not_after = cert.get("notAfter") or details.get("notAfter")
     if not_after:
         try:
             cert_expiry = epoch_ms_to_iso(int(not_after))
         except (ValueError, TypeError):
             pass
+    # Some responses embed expiry directly on the endpoint as certExpiry (epoch ms)
+    if not cert_expiry:
+        raw = ep.get("certExpiry") or ep.get("details", {}).get("certExpiry")
+        if raw:
+            try:
+                cert_expiry = epoch_ms_to_iso(int(raw))
+            except (ValueError, TypeError):
+                pass
 
     return {"grade": grade, "cert_expiry": cert_expiry, "ip_address": ip_address, "has_warnings": has_warnings}
 
@@ -156,10 +165,10 @@ def main() -> None:
         if data:
             results = extract_results(data)
             upsert(conn, muni["id"], domain, results, checked_at)
-            print(f"  → grade={results['grade']}  cert_expiry={results['cert_expiry']}")
+            print(f"  grade={results['grade']}  cert_expiry={results['cert_expiry']}")
         else:
             upsert(conn, muni["id"], domain, {"grade": None, "cert_expiry": None, "ip_address": None, "has_warnings": False}, checked_at)
-            print(f"  → scan failed, stored null grade")
+            print(f"  scan failed, stored null grade")
 
         if i < len(municipalities):
             time.sleep(BETWEEN_HOSTS)

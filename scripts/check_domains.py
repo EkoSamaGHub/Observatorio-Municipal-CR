@@ -102,7 +102,7 @@ def main() -> None:
         info = lookup_whois(domain)
         checked_at = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         upsert(conn, muni["id"], domain, info, checked_at)
-        print(f"  → expiry={info['expiry_date']}  registrar={info['registrar']}")
+        print(f"  expiry={info['expiry_date']}  registrar={info['registrar']}")
 
         if i < len(municipalities):
             time.sleep(BETWEEN_HOSTS)
