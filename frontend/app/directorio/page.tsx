@@ -1,7 +1,7 @@
-import Image from "next/image";
 import Link from "next/link";
 import { getTranslations } from "next-intl/server";
 import { api, Municipality } from "@/lib/api";
+import FaviconImage from "@/components/FaviconImage";
 
 const PROVINCES = [
   "San José",
@@ -89,21 +89,12 @@ export default async function DirectorioPage() {
                     className="bg-white border border-gray-200 rounded-lg p-4 flex flex-col items-center gap-3 hover:border-blue-300 hover:shadow-sm transition-all"
                   >
                     {/* Logo / favicon */}
-                    <div className="w-12 h-12 rounded-lg bg-gray-50 border border-gray-100 flex items-center justify-center overflow-hidden shrink-0">
-                      {favicon ? (
-                        <Image
-                          src={favicon}
-                          alt=""
-                          width={32}
-                          height={32}
-                          unoptimized
-                          className="object-contain"
-                        />
-                      ) : (
-                        <span className="text-lg font-bold text-blue-900">
-                          {m.name.charAt(0)}
-                        </span>
-                      )}
+                    <div className="w-12 h-12 rounded-lg overflow-hidden shrink-0">
+                      <FaviconImage
+                        src={favicon}
+                        initial={m.name.replace(/^Municipalidad\s+(de|del)\s+/i, "").charAt(0).toUpperCase()}
+                        seed={m.id}
+                      />
                     </div>
 
                     {/* Name */}
