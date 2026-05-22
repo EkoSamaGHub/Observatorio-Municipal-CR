@@ -26,6 +26,8 @@ class Page(BaseModel):
     status_code: Optional[int]
     depth: int
     last_crawled: str
+    title: Optional[str] = None
+    snippet: Optional[str] = None
 
 
 class Document(BaseModel):
@@ -62,8 +64,11 @@ class CrawlRun(BaseModel):
 class SearchResult(BaseModel):
     type: str
     municipality_id: str
+    municipality_name: Optional[str] = None
     url: str
     file_type: Optional[str] = None
+    title: Optional[str] = None
+    snippet: Optional[str] = None
     last_seen: Optional[str] = None
     last_crawled: Optional[str] = None
 

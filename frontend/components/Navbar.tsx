@@ -2,54 +2,73 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import {
+  Building2,
+  LayoutGrid,
+  Shield,
+  FileText,
+  GitCompareArrows,
+  Search,
+  Map,
+} from "lucide-react";
 
 const NAV_LINKS = [
-  { href: "/", label: "Inicio" },
-  { href: "/municipalidades", label: "Municipalidades" },
-  { href: "/directorio", label: "Directorio" },
-  { href: "/reportes/seguridad", label: "Seguridad" },
-  { href: "/documentos", label: "Documentos" },
-  { href: "/cambios", label: "Cambios" },
-  { href: "/busqueda", label: "Búsqueda" },
+  { href: "/",                   label: "Inicio",          icon: Building2 },
+  { href: "/municipalidades",    label: "Municipalidades", icon: LayoutGrid },
+  { href: "/directorio",         label: "Directorio",      icon: Map },
+  { href: "/documentos",         label: "Documentos",      icon: FileText },
+  { href: "/cambios",            label: "Cambios",         icon: GitCompareArrows },
+  { href: "/reportes/seguridad", label: "Seguridad",       icon: Shield },
+  { href: "/busqueda",           label: "Búsqueda",        icon: Search },
 ];
 
 export default function Navbar() {
   const pathname = usePathname();
 
-  return (
-    <header className="bg-white border-b border-slate-200 sticky top-0 z-50 shadow-sm">
-      {/* Top accent bar — CR colors */}
-      <div className="h-1 bg-gradient-to-r from-blue-900 via-blue-600 to-red-600" />
+  const isActive = (href: string) =>
+    href === "/" ? pathname === "/" : pathname.startsWith(href);
 
-      <div className="container mx-auto px-4 max-w-7xl flex items-center justify-between h-14">
+  return (
+    <header className="bg-white border-b border-slate-200 sticky top-0 z-50">
+      {/* CR accent bar */}
+      <div className="h-0.5 bg-gradient-to-r from-blue-800 via-blue-500 to-red-600" />
+
+      <div className="container mx-auto px-4 max-w-7xl flex items-center h-14 gap-6">
         {/* Logo */}
-        <Link href="/" className="flex items-center gap-2.5 shrink-0">
-          <div className="w-8 h-8 rounded bg-blue-900 flex items-center justify-center">
-            <svg viewBox="0 0 24 24" fill="none" className="w-5 h-5 text-white" stroke="currentColor" strokeWidth="1.8">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 21v-8.25M15.75 21v-8.25M8.25 21v-8.25M3 9l9-6 9 6m-1.5 12V10.332A48.36 48.36 0 0 0 12 9.75c-2.551 0-5.056.2-7.5.582V21M3 21h18M12 6.75h.008v.008H12V6.75Z" />
-            </svg>
+        <Link href="/" className="flex items-center gap-2.5 shrink-0 group">
+          <div className="w-8 h-8 rounded-lg bg-blue-900 flex items-center justify-center shadow-sm group-hover:bg-blue-800 transition-colors">
+            <Building2 className="w-4.5 h-4.5 text-white" strokeWidth={1.8} />
           </div>
-          <div className="hidden sm:block">
-            <span className="font-bold text-blue-900 text-sm leading-none">Observatorio Municipal</span>
-            <span className="block text-xs text-slate-500 leading-none mt-0.5">Costa Rica · 84 municipalidades</span>
+          <div className="hidden md:block leading-tight">
+            <p className="text-sm font-bold text-blue-950 tracking-tight">Observatorio Municipal</p>
+            <p className="text-[10px] text-slate-400 font-medium tracking-wide uppercase">Costa Rica · 84 municipalidades</p>
           </div>
-          <span className="sm:hidden font-bold text-blue-900 text-sm">ObsMuni CR</span>
+          <span className="md:hidden text-sm font-bold text-blue-950">ObsMuni CR</span>
         </Link>
 
-        {/* Nav links */}
-        <nav className="flex items-center gap-0.5">
-          {NAV_LINKS.map(({ href, label }) => {
-            const active = pathname === href;
+        {/* Divider */}
+        <div className="hidden md:block h-5 w-px bg-slate-200" />
+
+        {/* Nav */}
+        <nav className="flex items-center gap-0.5 overflow-x-auto flex-1 no-scrollbar">
+          {NAV_LINKS.map(({ href, label, icon: Icon }) => {
+            const active = isActive(href);
             return (
               <Link
                 key={href}
                 href={href}
-                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-                  active
-                    ? "bg-blue-50 text-blue-700"
-                    : "text-slate-600 hover:text-blue-700 hover:bg-slate-50"
-                }`}
+                className={`
+                  flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all
+                  ${active
+                    ? "bg-blue-50 text-blue-700 shadow-sm"
+                    : "text-slate-500 hover:text-slate-800 hover:bg-slate-50"
+                  }
+                `}
               >
+                <Icon
+                  className={`w-3.5 h-3.5 shrink-0 ${active ? "text-blue-600" : "text-slate-400"}`}
+                  strokeWidth={active ? 2.2 : 1.8}
+                />
                 {label}
               </Link>
             );

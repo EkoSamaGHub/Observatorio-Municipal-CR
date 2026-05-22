@@ -12,12 +12,27 @@ def init_db() -> None:
 
     if BACKEND == "postgres":
         _init_postgres(conn)
+        _migrate_postgres(conn)
     else:
         _init_sqlite(conn)
+        _migrate_sqlite(conn)
 
     conn.commit()
     conn.close()
     print(f"Database initialized — backend: {_DB_PATH_MSG}")
+
+
+def _migrate_sqlite(conn) -> None:
+    for col, typedef in [("title", "TEXT"), ("snippet", "TEXT")]:
+        try:
+            conn.execute(f"ALTER TABLE pages ADD COLUMN {col} {typedef}")
+        except Exception:
+            pass
+
+
+def _migrate_postgres(conn) -> None:
+    conn.execute("ALTER TABLE pages ADD COLUMN IF NOT EXISTS title TEXT")
+    conn.execute("ALTER TABLE pages ADD COLUMN IF NOT EXISTS snippet TEXT")
 
 
 def _init_sqlite(conn) -> None:
@@ -30,7 +45,9 @@ def _init_sqlite(conn) -> None:
         content_hash    TEXT,
         status_code     INTEGER,
         depth           INTEGER,
-        last_crawled    TEXT    NOT NULL
+        last_crawled    TEXT    NOT NULL,
+        title           TEXT,
+        snippet         TEXT
     )
     """)
 
@@ -136,7 +153,9 @@ def _init_postgres(conn) -> None:
         content_hash    TEXT,
         status_code     INTEGER,
         depth           INTEGER,
-        last_crawled    TEXT      NOT NULL
+        last_crawled    TEXT      NOT NULL,
+        title           TEXT,
+        snippet         TEXT
     )
     """)
 

@@ -143,9 +143,18 @@ def upsert(conn, municipality_id: str, domain: str, results: dict, checked_at: s
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run SSL Labs scans for all municipalities")
     parser.add_argument("--limit", type=int, default=0, help="Max number of municipalities to scan (0=all)")
+    parser.add_argument("--skip-done", action="store_true", help="Skip municipalities already in ssl_reports")
     args = parser.parse_args()
 
     municipalities = [m for m in load_municipalities() if m.get("active")]
+
+    if args.skip_done:
+        conn_check = get_connection()
+        done = {r["municipality_id"] for r in conn_check.execute("SELECT municipality_id FROM ssl_reports").fetchall()}
+        conn_check.close()
+        municipalities = [m for m in municipalities if m["id"] not in done]
+        print(f"Skipping {84 - len(municipalities)} already scanned, {len(municipalities)} remaining.")
+
     if args.limit:
         municipalities = municipalities[: args.limit]
 

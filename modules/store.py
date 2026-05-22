@@ -1,3 +1,4 @@
+import re
 from datetime import datetime, timezone
 
 from configs.db import get_connection
@@ -7,6 +8,17 @@ from modules.classifiers import classify_url
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _extract_title_and_snippet(html: str) -> tuple[str | None, str | None]:
+    if not html:
+        return None, None
+    m = re.search(r"<title[^>]*>([^<]{1,200})</title>", html, re.IGNORECASE)
+    title = m.group(1).strip() if m else None
+    text = re.sub(r"<[^>]+>", " ", html)
+    text = re.sub(r"\s+", " ", text).strip()
+    snippet = text[:300] if text else None
+    return title, snippet
 
 
 def load_known_state(municipality_id: str) -> tuple[set[str], set[str]]:
@@ -49,15 +61,19 @@ def store_results(results: list[CrawlResult]) -> dict:
             if not result.success:
                 continue
 
+            title, snippet = _extract_title_and_snippet(result.html)
+
             cur = cursor.execute("""
-                INSERT INTO pages (municipality_id, url, content_type, content_hash, status_code, depth, last_crawled)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO pages (municipality_id, url, content_type, content_hash, status_code, depth, last_crawled, title, snippet)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(url) DO UPDATE SET
                     content_type  = EXCLUDED.content_type,
                     content_hash  = EXCLUDED.content_hash,
                     status_code   = EXCLUDED.status_code,
                     depth         = EXCLUDED.depth,
-                    last_crawled  = EXCLUDED.last_crawled
+                    last_crawled  = EXCLUDED.last_crawled,
+                    title         = EXCLUDED.title,
+                    snippet       = EXCLUDED.snippet
                 RETURNING id
             """, (
                 result.municipality_id,
@@ -67,6 +83,8 @@ def store_results(results: list[CrawlResult]) -> dict:
                 result.status_code,
                 result.depth,
                 now,
+                title,
+                snippet,
             ))
             stats["inserted"] += 1
 

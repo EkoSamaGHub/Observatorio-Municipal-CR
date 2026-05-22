@@ -49,7 +49,8 @@
     "profundidad": "Profundidad",
     "tipo": "Tipo",
     "estado": "Estado",
-    "detectado": "Detectado"
+    "detectado": "Detectado",
+    "pagina": "Página"
   },
   "documentos": {
     "titulo": "Documentos",
@@ -60,7 +61,8 @@
     "tipo": "Tipo",
     "primera_vez": "Primera vez visto",
     "ultima_vez": "Última vez visto",
-    "abrir": "Abrir"
+    "abrir": "Abrir",
+    "sin_documentos": "No se encontraron documentos."
   },
   "cambios": {
     "titulo": "Cambios Detectados",
@@ -78,7 +80,8 @@
     "tipo_pagina": "Página",
     "tipo_documento": "Documento",
     "filtrar_tipo": "Tipo",
-    "todos": "Todos"
+    "todos": "Todos",
+    "resultados_para": "resultados para"
   },
   "directorio": {
     "titulo": "Directorio de Municipalidades",

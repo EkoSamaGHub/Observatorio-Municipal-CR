@@ -1,5 +1,24 @@
 import { getTranslations } from "next-intl/server";
 import { api, Document } from "@/lib/api";
+import { FileText, FileSpreadsheet, Archive, Map, FileCode, ExternalLink } from "lucide-react";
+
+const FILE_ICONS: Record<string, React.ReactNode> = {
+  pdf:  <FileText className="w-5 h-5 text-red-500" />,
+  docx: <FileCode className="w-5 h-5 text-blue-500" />,
+  xlsx: <FileSpreadsheet className="w-5 h-5 text-emerald-600" />,
+  zip:  <Archive className="w-5 h-5 text-amber-500" />,
+  gis:  <Map className="w-5 h-5 text-teal-500" />,
+};
+
+const FILE_BADGE: Record<string, string> = {
+  pdf:  "bg-red-50 text-red-700 border-red-200",
+  docx: "bg-blue-50 text-blue-700 border-blue-200",
+  xlsx: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  zip:  "bg-amber-50 text-amber-700 border-amber-200",
+  gis:  "bg-teal-50 text-teal-700 border-teal-200",
+};
+
+const FILE_TYPES = ["pdf", "docx", "xlsx", "zip", "gis"];
 
 export default async function DocumentosPage({
   searchParams,
@@ -16,31 +35,30 @@ export default async function DocumentosPage({
     // API not reachable
   }
 
-  const fileTypes = ["pdf", "docx", "xlsx", "zip", "gis"];
-
   return (
     <div className="space-y-6">
+
       <div>
-        <h1 className="text-3xl font-bold text-gray-900">{t("titulo")}</h1>
-        <p className="text-gray-500 mt-1">{t("subtitulo")}</p>
+        <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{t("titulo")}</h1>
+        <p className="text-slate-500 text-sm mt-1">{t("subtitulo")}</p>
       </div>
 
       {/* Type filter */}
       <div className="flex flex-wrap gap-2">
         <a
           href="/documentos"
-          className={`px-3 py-1.5 rounded-full text-sm font-medium border transition-colors ${
-            !tipo ? "bg-blue-600 text-white border-blue-600" : "border-gray-300 text-gray-600 hover:border-blue-400"
+          className={`px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+            !tipo ? "bg-blue-600 text-white border-blue-600 shadow-sm" : "bg-white border-slate-200 text-slate-600 hover:border-blue-300"
           }`}
         >
           {t("todos_tipos")}
         </a>
-        {fileTypes.map((ft) => (
+        {FILE_TYPES.map((ft) => (
           <a
             key={ft}
             href={`/documentos?tipo=${ft}`}
-            className={`px-3 py-1.5 rounded-full text-sm font-medium border uppercase transition-colors ${
-              tipo === ft ? "bg-blue-600 text-white border-blue-600" : "border-gray-300 text-gray-600 hover:border-blue-400"
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold border uppercase tracking-wide transition-colors ${
+              tipo === ft ? "bg-blue-600 text-white border-blue-600 shadow-sm" : "bg-white border-slate-200 text-slate-600 hover:border-blue-300"
             }`}
           >
             {ft}
@@ -48,54 +66,45 @@ export default async function DocumentosPage({
         ))}
       </div>
 
-      {/* Documents table */}
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-        {documents.length > 0 ? (
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr>
-                <th className="text-left px-4 py-3 font-medium text-gray-600">Documento</th>
-                <th className="text-center px-4 py-3 font-medium text-gray-600 hidden sm:table-cell">{t("tipo")}</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600 hidden md:table-cell">{t("municipalidad")}</th>
-                <th className="text-left px-4 py-3 font-medium text-gray-600 hidden lg:table-cell">{t("primera_vez")}</th>
-                <th className="px-4 py-3"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {documents.map((d) => (
-                <tr key={d.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-2.5 max-w-xs">
-                    <span className="truncate block text-gray-800">
-                      {decodeURIComponent(d.url.split("/").pop() ?? d.url)}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-center hidden sm:table-cell">
-                    <span className="bg-red-50 text-red-700 text-xs font-medium px-2 py-0.5 rounded uppercase">
-                      {d.file_type}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-gray-500 hidden md:table-cell">{d.municipality_id}</td>
-                  <td className="px-4 py-2.5 text-gray-400 text-xs hidden lg:table-cell">
-                    {new Date(d.first_seen).toLocaleDateString("es-CR")}
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <a
-                      href={d.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-600 hover:text-blue-800 font-medium"
-                    >
-                      {t("abrir")} ↗
-                    </a>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <div className="text-center py-12 text-gray-400">No se encontraron documentos.</div>
-        )}
-      </div>
+      {documents.length > 0 ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {documents.map((d) => {
+            const ft = d.file_type ?? "pdf";
+            const icon = FILE_ICONS[ft] ?? <FileText className="w-5 h-5 text-slate-400" />;
+            const badge = FILE_BADGE[ft] ?? "bg-slate-50 text-slate-600 border-slate-200";
+            const filename = (() => {
+              try { return decodeURIComponent(d.url.split("/").pop()?.split("?")[0] ?? d.url); }
+              catch { return d.url.split("/").pop() ?? d.url; }
+            })();
+            return (
+              <a
+                key={d.id}
+                href={d.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group bg-white border border-slate-200 rounded-xl p-4 hover:border-blue-300 hover:shadow-md transition-all flex items-start gap-3"
+              >
+                <div className={`p-2 rounded-lg border ${badge} shrink-0`}>{icon}</div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-slate-800 group-hover:text-blue-700 leading-snug line-clamp-2 transition-colors">
+                    {filename}
+                  </p>
+                  <p className="text-xs text-slate-400 mt-1 font-mono">{d.municipality_id}</p>
+                  <div className="flex items-center justify-between mt-2.5">
+                    <span className={`text-xs font-bold px-1.5 py-0.5 rounded border uppercase ${badge}`}>{ft}</span>
+                    <ExternalLink className="w-3.5 h-3.5 text-slate-300 group-hover:text-blue-400 transition-colors" />
+                  </div>
+                </div>
+              </a>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="bg-white border border-slate-200 rounded-2xl text-center py-20 space-y-3">
+          <FileText className="w-10 h-10 text-slate-200 mx-auto" />
+          <p className="text-slate-400 text-sm font-medium">{t("sin_documentos")}</p>
+        </div>
+      )}
     </div>
   );
 }

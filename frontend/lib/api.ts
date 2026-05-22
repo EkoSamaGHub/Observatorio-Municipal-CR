@@ -21,6 +21,8 @@ export interface Page {
   status_code: number | null;
   depth: number;
   last_crawled: string;
+  title: string | null;
+  snippet: string | null;
 }
 
 export interface Document {
@@ -94,8 +96,11 @@ export interface DomainExpiry {
 export interface SearchResult {
   type: string;
   municipality_id: string;
+  municipality_name: string | null;
   url: string;
   file_type: string | null;
+  title: string | null;
+  snippet: string | null;
   last_seen: string | null;
   last_crawled: string | null;
 }
