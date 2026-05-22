@@ -54,6 +54,17 @@ export interface CrawlRun {
   errors: number;
 }
 
+export interface ActiveRun {
+  active: boolean;
+  run_id?: number;
+  started_at?: string;
+  municipalities_done?: number;
+  municipalities_total?: number;
+  pages_crawled?: number;
+  current_municipality?: string | null;
+  current_url?: string | null;
+}
+
 export interface SearchResult {
   type: string;
   municipality_id: string;
@@ -90,6 +101,11 @@ export const api = {
 
   getRuns: () =>
     apiFetch<CrawlRun[]>("/runs"),
+
+  getActiveRun: () =>
+    fetch(`${API_BASE}/runs/active`, { cache: "no-store" })
+      .then((r) => r.json() as Promise<ActiveRun>)
+      .catch(() => ({ active: false }) as ActiveRun),
 
   search: (q: string, type?: string) =>
     apiFetch<{ total: number; results: SearchResult[] }>(

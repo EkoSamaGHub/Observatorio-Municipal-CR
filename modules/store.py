@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from configs.init_db import get_connection
+from configs.db import get_connection
 from crawlers.base import CrawlResult
 from modules.classifiers import classify_url
 
@@ -20,7 +20,7 @@ def load_known_state(municipality_id: str) -> tuple[set[str], set[str]]:
     conn = get_connection()
     try:
         rows = conn.execute(
-            "SELECT url FROM pages WHERE municipality_id = ?", (municipality_id,)
+            "SELECT url FROM pages WHERE municipality_id = %s", (municipality_id,)
         ).fetchall()
         known_urls = {r["url"] for r in rows}
 
@@ -28,7 +28,7 @@ def load_known_state(municipality_id: str) -> tuple[set[str], set[str]]:
             SELECT DISTINCT pl.target_url
             FROM page_links pl
             JOIN pages p ON p.url = pl.source_url
-            WHERE p.municipality_id = ?
+            WHERE p.municipality_id = %s
         """, (municipality_id,)).fetchall()
         seed_links = {r["target_url"] for r in link_rows}
     finally:
@@ -49,15 +49,16 @@ def store_results(results: list[CrawlResult]) -> dict:
             if not result.success:
                 continue
 
-            cursor.execute("""
+            cur = cursor.execute("""
                 INSERT INTO pages (municipality_id, url, content_type, content_hash, status_code, depth, last_crawled)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(url) DO UPDATE SET
-                    content_type  = excluded.content_type,
-                    content_hash  = excluded.content_hash,
-                    status_code   = excluded.status_code,
-                    depth         = excluded.depth,
-                    last_crawled  = excluded.last_crawled
+                    content_type  = EXCLUDED.content_type,
+                    content_hash  = EXCLUDED.content_hash,
+                    status_code   = EXCLUDED.status_code,
+                    depth         = EXCLUDED.depth,
+                    last_crawled  = EXCLUDED.last_crawled
+                RETURNING id
             """, (
                 result.municipality_id,
                 result.url,
@@ -67,25 +68,21 @@ def store_results(results: list[CrawlResult]) -> dict:
                 result.depth,
                 now,
             ))
+            stats["inserted"] += 1
 
-            if cursor.lastrowid and conn.total_changes:
-                stats["inserted"] += 1
-            else:
-                stats["updated"] += 1
-
-            # Store outgoing link graph
             for target in result.links:
                 cursor.execute("""
-                    INSERT OR IGNORE INTO page_links (source_url, target_url)
-                    VALUES (?, ?)
+                    INSERT INTO page_links (source_url, target_url)
+                    VALUES (%s, %s)
+                    ON CONFLICT (source_url, target_url) DO NOTHING
                 """, (result.url, target))
                 stats["links_stored"] += 1
 
             for pdf_url in result.pdfs:
                 cursor.execute("""
                     INSERT INTO documents (municipality_id, url, file_type, content_hash, first_seen, last_seen)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(url) DO UPDATE SET last_seen = excluded.last_seen
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT(url) DO UPDATE SET last_seen = EXCLUDED.last_seen
                 """, (
                     result.municipality_id,
                     pdf_url,

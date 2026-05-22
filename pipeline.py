@@ -1,7 +1,8 @@
 import argparse
 from datetime import datetime, timezone
 
-from configs.init_db import get_connection, init_db
+from configs.db import get_connection
+from configs.init_db import init_db
 from crawlers.crawl_all import load_municipalities
 from crawlers.scrapling_crawler import ScraplingCrawler
 from modules.change_tracker import detect_changes
@@ -30,7 +31,7 @@ def run_pipeline(
     init_db()
     conn = get_connection()
     run_id = conn.execute(
-        "INSERT INTO crawl_runs (started_at) VALUES (?)", (_now(),)
+        "INSERT INTO crawl_runs (started_at) VALUES (%s) RETURNING id", (_now(),)
     ).lastrowid
     conn.commit()
     conn.close()
@@ -88,7 +89,6 @@ def run_pipeline(
             logger.info(f"{name}: nothing to crawl")
             continue
 
-        # Warn if truncated
         if summary.terminated_by == "max_pages":
             logger.warning(
                 f"[{muni_id}] hit max_pages limit ({max_pages}) — "
@@ -148,9 +148,9 @@ def run_pipeline(
     conn = get_connection()
     conn.execute("""
         UPDATE crawl_runs
-        SET finished_at=?, municipalities=?, pages_crawled=?, pages_changed=?,
-            pages_new=?, errors=?, sitemap_urls_found=?
-        WHERE id=?
+        SET finished_at=%s, municipalities=%s, pages_crawled=%s, pages_changed=%s,
+            pages_new=%s, errors=%s, sitemap_urls_found=%s
+        WHERE id=%s
     """, (
         _now(), len(municipalities), total_pages, total_changed,
         total_new, total_errors, total_sitemap_urls, run_id,

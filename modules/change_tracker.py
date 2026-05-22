@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from configs.init_db import get_connection
+from configs.db import get_connection
 from crawlers.base import CrawlResult
 
 
@@ -20,7 +20,7 @@ def detect_changes(results: list[CrawlResult]) -> list[dict]:
                 continue
 
             row = cursor.execute(
-                "SELECT content_hash FROM pages WHERE url = ?", (result.url,)
+                "SELECT content_hash FROM pages WHERE url = %s", (result.url,)
             ).fetchone()
 
             if row is None:
@@ -41,7 +41,7 @@ def detect_changes(results: list[CrawlResult]) -> list[dict]:
         if changes:
             cursor.executemany("""
                 INSERT INTO page_diffs (municipality_id, url, old_hash, new_hash, detected_at)
-                VALUES (:municipality_id, :url, :old_hash, :new_hash, :detected_at)
+                VALUES (%(municipality_id)s, %(url)s, %(old_hash)s, %(new_hash)s, %(detected_at)s)
             """, changes)
             conn.commit()
 

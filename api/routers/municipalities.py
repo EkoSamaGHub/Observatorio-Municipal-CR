@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-import sqlite3
 
 from api.deps import get_db
 from api.schemas import Municipality, MunicipalityStats, Page, Document, Diff
@@ -30,7 +29,7 @@ def _get_muni_or_404(muni_id: str) -> dict:
 def list_municipalities(
     province: Optional[str] = None,
     active: bool = True,
-    db: sqlite3.Connection = Depends(get_db),
+    db=Depends(get_db),
 ):
     registry = _load_registry()
 
@@ -43,16 +42,16 @@ def list_municipalities(
     for m in registry:
         row = db.execute("""
             SELECT COUNT(*) as pages, MAX(last_crawled) as last_crawled
-            FROM pages WHERE municipality_id = ?
+            FROM pages WHERE municipality_id = %s
         """, (m["id"],)).fetchone()
 
         docs = db.execute(
-            "SELECT COUNT(*) as cnt FROM documents WHERE municipality_id = ?",
+            "SELECT COUNT(*) as cnt FROM documents WHERE municipality_id = %s",
             (m["id"],)
         ).fetchone()
 
         changes = db.execute(
-            "SELECT COUNT(*) as cnt FROM page_diffs WHERE municipality_id = ?",
+            "SELECT COUNT(*) as cnt FROM page_diffs WHERE municipality_id = %s",
             (m["id"],)
         ).fetchone()
 
@@ -68,21 +67,21 @@ def list_municipalities(
 
 
 @router.get("/{muni_id}", response_model=MunicipalityStats)
-def get_municipality(muni_id: str, db: sqlite3.Connection = Depends(get_db)):
+def get_municipality(muni_id: str, db=Depends(get_db)):
     m = _get_muni_or_404(muni_id)
 
     row = db.execute("""
         SELECT COUNT(*) as pages, MAX(last_crawled) as last_crawled
-        FROM pages WHERE municipality_id = ?
+        FROM pages WHERE municipality_id = %s
     """, (muni_id,)).fetchone()
 
     docs = db.execute(
-        "SELECT COUNT(*) as cnt FROM documents WHERE municipality_id = ?",
+        "SELECT COUNT(*) as cnt FROM documents WHERE municipality_id = %s",
         (muni_id,)
     ).fetchone()
 
     changes = db.execute(
-        "SELECT COUNT(*) as cnt FROM page_diffs WHERE municipality_id = ?",
+        "SELECT COUNT(*) as cnt FROM page_diffs WHERE municipality_id = %s",
         (muni_id,)
     ).fetchone()
 
@@ -101,22 +100,22 @@ def get_municipality_pages(
     depth: Optional[int] = None,
     limit: int = 100,
     offset: int = 0,
-    db: sqlite3.Connection = Depends(get_db),
+    db=Depends(get_db),
 ):
     _get_muni_or_404(muni_id)
 
-    query = "SELECT * FROM pages WHERE municipality_id = ?"
+    query = "SELECT * FROM pages WHERE municipality_id = %s"
     params: list = [muni_id]
 
     if depth is not None:
-        query += " AND depth = ?"
+        query += " AND depth = %s"
         params.append(depth)
 
-    query += " ORDER BY depth, last_crawled DESC LIMIT ? OFFSET ?"
+    query += " ORDER BY depth, last_crawled DESC LIMIT %s OFFSET %s"
     params += [limit, offset]
 
     rows = db.execute(query, params).fetchall()
-    return [Page(**dict(r)) for r in rows]
+    return [Page(**r) for r in rows]
 
 
 @router.get("/{muni_id}/documents", response_model=list[Document])
@@ -125,22 +124,22 @@ def get_municipality_documents(
     file_type: Optional[str] = None,
     limit: int = 100,
     offset: int = 0,
-    db: sqlite3.Connection = Depends(get_db),
+    db=Depends(get_db),
 ):
     _get_muni_or_404(muni_id)
 
-    query = "SELECT * FROM documents WHERE municipality_id = ?"
+    query = "SELECT * FROM documents WHERE municipality_id = %s"
     params: list = [muni_id]
 
     if file_type:
-        query += " AND file_type = ?"
+        query += " AND file_type = %s"
         params.append(file_type)
 
-    query += " ORDER BY last_seen DESC LIMIT ? OFFSET ?"
+    query += " ORDER BY last_seen DESC LIMIT %s OFFSET %s"
     params += [limit, offset]
 
     rows = db.execute(query, params).fetchall()
-    return [Document(downloaded=bool(r["downloaded"]), **{k: v for k, v in dict(r).items() if k != "downloaded"}) for r in rows]
+    return [Document(downloaded=bool(r["downloaded"]), **{k: v for k, v in r.items() if k != "downloaded"}) for r in rows]
 
 
 @router.get("/{muni_id}/diffs", response_model=list[Diff])
@@ -148,13 +147,13 @@ def get_municipality_diffs(
     muni_id: str,
     limit: int = 50,
     offset: int = 0,
-    db: sqlite3.Connection = Depends(get_db),
+    db=Depends(get_db),
 ):
     _get_muni_or_404(muni_id)
 
     rows = db.execute("""
-        SELECT * FROM page_diffs WHERE municipality_id = ?
-        ORDER BY detected_at DESC LIMIT ? OFFSET ?
+        SELECT * FROM page_diffs WHERE municipality_id = %s
+        ORDER BY detected_at DESC LIMIT %s OFFSET %s
     """, (muni_id, limit, offset)).fetchall()
 
-    return [Diff(**dict(r)) for r in rows]
+    return [Diff(**r) for r in rows]

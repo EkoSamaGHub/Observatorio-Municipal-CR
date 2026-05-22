@@ -24,6 +24,9 @@ frontend/out/
 frontend/.env.local
 frontend/.env.production
 
+# Migration artifacts
+migration_log.txt
+
 # OS
 .DS_Store
 Thumbs.db
