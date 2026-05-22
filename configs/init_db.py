@@ -28,11 +28,18 @@ def _migrate_sqlite(conn) -> None:
             conn.execute(f"ALTER TABLE pages ADD COLUMN {col} {typedef}")
         except Exception:
             pass
+    for col, typedef in [("sitemap_urls_found", "INTEGER DEFAULT 0"), ("completeness_pct", "REAL DEFAULT 0")]:
+        try:
+            conn.execute(f"ALTER TABLE crawl_runs ADD COLUMN {col} {typedef}")
+        except Exception:
+            pass
 
 
 def _migrate_postgres(conn) -> None:
     conn.execute("ALTER TABLE pages ADD COLUMN IF NOT EXISTS title TEXT")
     conn.execute("ALTER TABLE pages ADD COLUMN IF NOT EXISTS snippet TEXT")
+    conn.execute("ALTER TABLE crawl_runs ADD COLUMN IF NOT EXISTS sitemap_urls_found INTEGER DEFAULT 0")
+    conn.execute("ALTER TABLE crawl_runs ADD COLUMN IF NOT EXISTS completeness_pct REAL DEFAULT 0")
 
 
 def _init_sqlite(conn) -> None:
