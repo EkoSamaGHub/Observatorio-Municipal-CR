@@ -1,0 +1,17 @@
+scrapling
+playwright
+beautifulsoup4
+pandas
+lxml
+aiofiles
+tqdm
+pydantic
+requests
+PyMuPDF
+pdfplumber
+tldextract
+aiohttp
+fastapi
+uvicorn[standard]
+psycopg2-binary
+python-dotenv

@@ -1,0 +1,63 @@
+name: Nightly Crawl
+
+on:
+  schedule:
+    # Runs at 02:00 UTC every day (10pm Costa Rica time, CR is UTC-6)
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Crawl mode"
+        required: false
+        default: "discover"
+        type: choice
+        options:
+          - discover
+          - monitor
+      ids:
+        description: "Municipality IDs (space-separated, leave empty for all)"
+        required: false
+        default: ""
+      max_pages:
+        description: "Max pages per municipality"
+        required: false
+        default: "500"
+
+jobs:
+  crawl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install chromium --with-deps
+
+      - name: Initialize database schema
+        run: python -c "from configs.init_db import init_db; init_db()"
+
+      - name: Run crawl pipeline
+        run: |
+          MODE="${{ github.event.inputs.mode || 'discover' }}"
+          MAX_PAGES="${{ github.event.inputs.max_pages || '500' }}"
+          IDS="${{ github.event.inputs.ids }}"
+
+          if [ -n "$IDS" ]; then
+            python pipeline.py --mode "$MODE" --max-pages "$MAX_PAGES" --delay 1.5 --ids $IDS
+          else
+            python pipeline.py --mode "$MODE" --max-pages "$MAX_PAGES" --delay 1.5
+          fi
