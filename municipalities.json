@@ -10,7 +10,7 @@
     "id": "SJ002",
     "province": "San José",
     "name": "Municipalidad de Escazú",
-    "root_url": "https://www.escazu.go.cr",
+    "root_url": "https://escazu.go.cr",
     "active": true
   },
   {
@@ -31,21 +31,21 @@
     "id": "SJ005",
     "province": "San José",
     "name": "Municipalidad de Tarrazú",
-    "root_url": "https://www.munitarrazu.go.cr",
+    "root_url": "https://munitarrazu.go.cr",
     "active": true
   },
   {
     "id": "SJ006",
     "province": "San José",
     "name": "Municipalidad de Aserrí",
-    "root_url": "https://www.aserri.go.cr",
+    "root_url": "https://aserri.go.cr",
     "active": true
   },
   {
     "id": "SJ007",
     "province": "San José",
     "name": "Municipalidad de Mora",
-    "root_url": "https://www.mora.go.cr",
+    "root_url": "https://mora.go.cr",
     "active": true
   },
   {
@@ -94,7 +94,7 @@
     "id": "SJ014",
     "province": "San José",
     "name": "Municipalidad de Moravia",
-    "root_url": "https://www.moravia.go.cr",
+    "root_url": "https://moravia.go.cr",
     "active": true
   },
   {
@@ -136,7 +136,7 @@
     "id": "SJ020",
     "province": "San José",
     "name": "Municipalidad de León Cortés",
-    "root_url": "https://www.munileco.go.cr",
+    "root_url": "https://munileco.go.cr",
     "active": true
   },
   {
@@ -227,7 +227,7 @@
     "id": "AL013",
     "province": "Alajuela",
     "name": "Municipalidad de Upala",
-    "root_url": "https://muniupala.go.cr",
+    "root_url": "https://www.muniupala.go.cr",
     "active": true
   },
   {
@@ -248,7 +248,7 @@
     "id": "AL016",
     "province": "Alajuela",
     "name": "Municipalidad de Río Cuarto",
-    "root_url": "https://www.riocuarto.go.cr",
+    "root_url": "https://www.muniriocuarto.go.cr",
     "active": true
   },
   {
@@ -276,7 +276,7 @@
     "id": "CA004",
     "province": "Cartago",
     "name": "Municipalidad de Jiménez",
-    "root_url": "https://www.munijimenez.go.cr",
+    "root_url": "https://munijimenez.go.cr",
     "active": true
   },
   {
@@ -437,7 +437,7 @@
     "id": "GU009",
     "province": "Guanacaste",
     "name": "Municipalidad de Nandayure",
-    "root_url": "https://www.nandayure.go.cr",
+    "root_url": "https://nandayure.go.cr",
     "active": true
   },
   {
@@ -479,7 +479,7 @@
     "id": "PU004",
     "province": "Puntarenas",
     "name": "Municipalidad de Montes de Oro",
-    "root_url": "https://www.montesdeoro.go.cr",
+    "root_url": "https://montesdeoro.go.cr",
     "active": true
   },
   {
@@ -563,7 +563,7 @@
     "id": "LI003",
     "province": "Limón",
     "name": "Municipalidad de Siquirres",
-    "root_url": "https://www.siquirres.go.cr",
+    "root_url": "https://siquirres.go.cr",
     "active": true
   },
   {
@@ -584,7 +584,7 @@
     "id": "LI006",
     "province": "Limón",
     "name": "Municipalidad de Guácimo",
-    "root_url": "https://www.guacimo.go.cr",
+    "root_url": "https://guacimo.go.cr",
     "active": true
   }
 ]
