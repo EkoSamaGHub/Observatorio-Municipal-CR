@@ -61,18 +61,32 @@ def get_coverage():
 
 def pipeline_loop():
     time.sleep(3)  # give HTTP server time to bind first
+    print("[worker] Pipeline thread started", flush=True)
 
-    from configs.init_db import init_db
-    from modules.logger import logger
-    from pipeline import run_pipeline
+    try:
+        from configs.init_db import init_db
+        from pipeline import run_pipeline
+    except Exception as e:
+        print(f"[worker] IMPORT ERROR: {e}", flush=True)
+        _state["status"] = f"import error: {e}"
+        return
 
-    logger.info("[worker] Pipeline thread started")
+    # Use stdlib logging directly to avoid the file-handler in modules/logger
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        stream=sys.stdout,
+        force=True,
+    )
+    log = logging.getLogger("worker")
+    log.info("[worker] Imports OK")
 
     try:
         init_db()
-        logger.info("[worker] DB ready")
+        log.info("[worker] DB ready")
     except Exception as e:
-        logger.error(f"[worker] init_db failed: {e}")
+        log.error(f"[worker] init_db failed: {e}")
         _state["status"] = f"init_db error: {e}"
         return
 
@@ -82,24 +96,24 @@ def pipeline_loop():
         try:
             indexed, total = get_coverage()
         except Exception as e:
-            logger.error(f"[worker] coverage check error: {e}")
+            log.error(f"[worker] coverage check error: {e}")
             time.sleep(30)
             continue
 
         pct = indexed / total * 100 if total else 0
         _state.update(coverage=f"{indexed}/{total} ({pct:.1f}%)", last_run=_now())
-        logger.info(f"[worker] Coverage: {indexed}/{total} ({pct:.1f}%)")
+        log.info(f"[worker] Coverage: {indexed}/{total} ({pct:.1f}%)")
 
         if indexed >= total:
-            logger.info("[worker] 100% coverage — switching to monitor mode")
+            log.info("[worker] 100% coverage — switching to monitor mode")
             break
 
-        logger.info(f"[worker] {total - indexed} missing — running discover...")
+        log.info(f"[worker] {total - indexed} missing — running discover...")
         try:
             run_pipeline(mode="discover", only_missing=True)
             _state["status"] = "ok"
         except Exception as e:
-            logger.error(f"[worker] discover error: {e}")
+            log.error(f"[worker] discover error: {e}")
             _state["status"] = f"error: {e}"
             time.sleep(RETRY_DELAY)
         time.sleep(10)
@@ -107,12 +121,12 @@ def pipeline_loop():
     # Phase 2 — Monitor every N hours
     _state["phase"] = "monitor"
     while True:
-        logger.info(f"[worker] Monitor pass — {_now()}")
+        log.info(f"[worker] Monitor pass — {_now()}")
         try:
             run_pipeline(mode="monitor")
             _state["status"] = "ok"
         except Exception as e:
-            logger.error(f"[worker] monitor error: {e}")
+            log.error(f"[worker] monitor error: {e}")
             _state["status"] = f"error: {e}"
 
         try:
@@ -121,7 +135,7 @@ def pipeline_loop():
         except Exception:
             pass
 
-        logger.info(f"[worker] Sleeping {MONITOR_HOURS}h")
+        log.info(f"[worker] Sleeping {MONITOR_HOURS}h")
         time.sleep(MONITOR_HOURS * 3600)
 
 
