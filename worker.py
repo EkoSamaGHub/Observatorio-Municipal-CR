@@ -106,6 +106,24 @@ def pipeline_loop():
 
     db_url = os.environ.get("DATABASE_URL", "NOT SET")
     log.info(f"[worker] DATABASE_URL set: {'yes ('+db_url[:30]+'...)' if db_url != 'NOT SET' else 'NO — will use SQLite'}")
+
+    # ── TCP connectivity check (fast fail if Timescale unreachable) ───────────
+    if db_url != "NOT SET":
+        import socket as _socket
+        from urllib.parse import urlparse as _urlparse
+        _u = _urlparse(db_url)
+        _host, _port = _u.hostname, _u.port or 5432
+        log.info(f"[worker] TCP probe → {_host}:{_port} ...")
+        try:
+            _s = _socket.create_connection((_host, _port), timeout=15)
+            _s.close()
+            log.info(f"[worker] TCP probe → OK (reachable)")
+        except Exception as _e:
+            log.error(f"[worker] TCP probe → FAILED: {_e}")
+            log.error("[worker] Timescale unreachable from Railway — check IP allowlist / firewall")
+            _state["status"] = f"tcp_fail: {_e}"
+            return
+
     try:
         init_db()
         log.info("[worker] DB ready")
