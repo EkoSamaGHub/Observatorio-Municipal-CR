@@ -63,15 +63,37 @@ def pipeline_loop():
     time.sleep(3)  # give HTTP server time to bind first
     print("[worker] Pipeline thread started", flush=True)
 
+    # ── Granular import diagnostics (each step printed before+after) ──────────
+    print("[worker] A: importing configs.init_db ...", flush=True)
     try:
         from configs.init_db import init_db
-        from pipeline import run_pipeline
+        print("[worker] A: OK", flush=True)
     except Exception as e:
-        print(f"[worker] IMPORT ERROR: {e}", flush=True)
-        _state["status"] = f"import error: {e}"
+        print(f"[worker] A: FAIL — {e}", flush=True)
+        _state["status"] = f"import error (init_db): {e}"
         return
 
-    # Use stdlib logging directly to avoid the file-handler in modules/logger
+    print("[worker] B: importing scrapling.fetchers.Fetcher ...", flush=True)
+    try:
+        from scrapling.fetchers import Fetcher  # noqa — just testing import
+        print("[worker] B: OK", flush=True)
+    except Exception as e:
+        print(f"[worker] B: FAIL — {e}", flush=True)
+        _state["status"] = f"import error (scrapling): {e}"
+        return
+
+    print("[worker] C: importing pipeline.run_pipeline ...", flush=True)
+    try:
+        from pipeline import run_pipeline
+        print("[worker] C: OK", flush=True)
+    except Exception as e:
+        print(f"[worker] C: FAIL — {e}", flush=True)
+        _state["status"] = f"import error (pipeline): {e}"
+        return
+
+    print("[worker] ALL IMPORTS OK", flush=True)
+
+    # Use stdlib logging directed to stdout (bypasses file handler in modules/logger)
     import logging
     logging.basicConfig(
         level=logging.INFO,
@@ -80,7 +102,7 @@ def pipeline_loop():
         force=True,
     )
     log = logging.getLogger("worker")
-    log.info("[worker] Imports OK")
+    log.info("[worker] Logging configured → stdout")
 
     try:
         init_db()
