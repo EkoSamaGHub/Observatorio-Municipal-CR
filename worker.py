@@ -104,6 +104,8 @@ def pipeline_loop():
     log = logging.getLogger("worker")
     log.info("[worker] Logging configured → stdout")
 
+    db_url = os.environ.get("DATABASE_URL", "NOT SET")
+    log.info(f"[worker] DATABASE_URL set: {'yes ('+db_url[:30]+'...)' if db_url != 'NOT SET' else 'NO — will use SQLite'}")
     try:
         init_db()
         log.info("[worker] DB ready")

@@ -137,6 +137,7 @@ class _PgConn:
             password=r.password,
             sslmode=qs.get("sslmode", "prefer"),
             cursor_factory=psycopg2.extras.RealDictCursor,
+            connect_timeout=20,  # fail fast if Timescale unreachable
         )
 
     def execute(self, sql: str, params=None) -> _PgCursor:
