@@ -126,15 +126,40 @@ def _frontend_admin_url() -> str:
 
 
 def _oauth_config() -> tuple[str, str, str]:
-    client_id = os.environ.get("DISCORD_CLIENT_ID", "")
-    client_secret = os.environ.get("DISCORD_CLIENT_SECRET", "")
-    redirect_uri = os.environ.get("DISCORD_REDIRECT_URI", "")
-    if not (client_id and client_secret and redirect_uri):
+    client_id = os.environ.get("DISCORD_CLIENT_ID", "").strip().strip('"').strip("'")
+    client_secret = os.environ.get("DISCORD_CLIENT_SECRET", "").strip().strip('"').strip("'")
+    redirect_uri = os.environ.get("DISCORD_REDIRECT_URI", "").strip().strip('"').strip("'")
+    missing = [
+        name for name, val in (
+            ("DISCORD_CLIENT_ID", client_id),
+            ("DISCORD_CLIENT_SECRET", client_secret),
+            ("DISCORD_REDIRECT_URI", redirect_uri),
+        ) if not val
+    ]
+    if missing:
         raise HTTPException(
             status_code=503,
-            detail="Discord SSO not configured (DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET / DISCORD_REDIRECT_URI)",
+            detail=f"Discord SSO not configured — missing: {', '.join(missing)}",
         )
     return client_id, client_secret, redirect_uri
+
+
+@router.get("/auth/diag")
+def auth_diag():
+    # No secrets returned — only presence flags. Safe to expose; helps when
+    # configuring env vars on a new deploy.
+    def present(name: str) -> bool:
+        return bool(os.environ.get(name, "").strip().strip('"').strip("'"))
+    return {
+        "ADMIN_TOKEN": present("ADMIN_TOKEN"),
+        "SESSION_SECRET": present("SESSION_SECRET"),
+        "ADMIN_DISCORD_IDS": present("ADMIN_DISCORD_IDS"),
+        "ADMIN_DISCORD_IDS_count": len(_admin_discord_ids()),
+        "ADMIN_FRONTEND_URL": present("ADMIN_FRONTEND_URL"),
+        "DISCORD_CLIENT_ID": present("DISCORD_CLIENT_ID"),
+        "DISCORD_CLIENT_SECRET": present("DISCORD_CLIENT_SECRET"),
+        "DISCORD_REDIRECT_URI": present("DISCORD_REDIRECT_URI"),
+    }
 
 
 def _set_cookie(resp: Response, name: str, value: str, max_age: int) -> None:
