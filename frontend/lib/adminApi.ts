@@ -1,19 +1,16 @@
-// Admin control-plane client. The token is held client-side (localStorage) and
-// sent as X-Admin-Token on every request; the API enforces it. The admin route
-// is never linked from the public nav and is useless without the token.
+// Admin control-plane client. Auth is an httpOnly session cookie set by the
+// backend's Discord OAuth callback; we just send credentials on every request.
+// The admin route is never linked from the public nav.
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-const TOKEN_KEY = "obsmuni_admin_token";
 
-export function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(TOKEN_KEY);
-}
-export function setToken(token: string): void {
-  window.localStorage.setItem(TOKEN_KEY, token);
-}
-export function clearToken(): void {
-  window.localStorage.removeItem(TOKEN_KEY);
+export const discordLoginUrl = (): string => `${API_BASE}/admin/auth/discord/login`;
+
+export interface AuthMe {
+  authenticated: boolean;
+  discord_id?: string;
+  username?: string;
+  exp?: number;
 }
 
 export interface Progress {
@@ -127,13 +124,12 @@ export class AdminError extends Error {
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getToken();
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
     cache: "no-store",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { "X-Admin-Token": token } : {}),
       ...(init?.headers ?? {}),
     },
   });
@@ -153,6 +149,8 @@ const post = <T>(path: string, body?: unknown) =>
   call<T>(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
 
 export const adminApi = {
+  me: () => call<AuthMe>("/admin/auth/me"),
+  logout: () => call<void>("/admin/auth/logout", { method: "POST" }),
   overview: () => call<Overview>("/admin/overview"),
   runs: (limit = 25) => call<RunSummary[]>(`/admin/runs?limit=${limit}`),
   tasks: (runId: number) => call<TaskRow[]>(`/admin/runs/${runId}/tasks`),

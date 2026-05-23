@@ -11,10 +11,18 @@ Postgres. The actual crawling is performed by the distributed workers
 (GitHub Actions + Railway worker.py) that already obey that state.
 """
 
+import base64
+import hashlib
 import hmac
+import json
 import os
+import secrets
+import time
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+import requests
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel
 
 from modules import admin_ops, events
@@ -23,22 +31,220 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 
 # ── auth ──────────────────────────────────────────────────────────────────────
+#
+# Two accepted credentials:
+#   1) Signed session cookie set by the Discord OAuth callback (UI flow).
+#   2) X-Admin-Token / Bearer header matching ADMIN_TOKEN (scripts / curl).
+# Either is sufficient. ADMIN_TOKEN must still be set — it doubles as the
+# session signing secret unless SESSION_SECRET is configured separately.
+
+SESSION_COOKIE = "obsmuni_admin_session"
+SESSION_TTL_SECONDS = 60 * 60 * 12  # 12h
+OAUTH_STATE_COOKIE = "obsmuni_admin_oauth_state"
+
+
+def _signing_secret() -> str:
+    return os.environ.get("SESSION_SECRET") or os.environ.get("ADMIN_TOKEN") or ""
+
+
+def _b64url_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(data: str) -> bytes:
+    pad = "=" * (-len(data) % 4)
+    return base64.urlsafe_b64decode(data + pad)
+
+
+def _sign_session(payload: dict) -> str:
+    secret = _signing_secret().encode()
+    body = _b64url_encode(json.dumps(payload, separators=(",", ":")).encode())
+    sig = _b64url_encode(hmac.new(secret, body.encode(), hashlib.sha256).digest())
+    return f"{body}.{sig}"
+
+
+def _verify_session(cookie_val: str | None) -> dict | None:
+    if not cookie_val or "." not in cookie_val:
+        return None
+    secret = _signing_secret().encode()
+    if not secret:
+        return None
+    body, sig = cookie_val.rsplit(".", 1)
+    expected = _b64url_encode(hmac.new(secret, body.encode(), hashlib.sha256).digest())
+    if not hmac.compare_digest(expected, sig):
+        return None
+    try:
+        payload = json.loads(_b64url_decode(body))
+    except Exception:
+        return None
+    if payload.get("exp", 0) < int(time.time()):
+        return None
+    return payload
+
+
+def _admin_discord_ids() -> set[str]:
+    raw = os.environ.get("ADMIN_DISCORD_IDS", "")
+    return {s.strip() for s in raw.split(",") if s.strip()}
+
 
 def require_admin(
     x_admin_token: str | None = Header(default=None),
     authorization: str | None = Header(default=None),
+    session_cookie: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> None:
     token = os.environ.get("ADMIN_TOKEN")
     if not token:
         raise HTTPException(status_code=503, detail="Admin disabled: ADMIN_TOKEN not set")
+
+    # 1) Session cookie from Discord SSO
+    session = _verify_session(session_cookie)
+    if session and session.get("sub") in _admin_discord_ids():
+        return
+
+    # 2) Header token (scripts / curl)
     provided = x_admin_token
     if not provided and authorization and authorization.lower().startswith("bearer "):
         provided = authorization.split(" ", 1)[1]
-    if not provided or not hmac.compare_digest(provided, token):
-        raise HTTPException(status_code=401, detail="Invalid or missing admin token")
+    if provided and hmac.compare_digest(provided, token):
+        return
+
+    raise HTTPException(status_code=401, detail="Invalid or missing admin credentials")
 
 
 _auth = [Depends(require_admin)]
+
+
+# ── Discord OAuth ───────────────────────────────────────────────────────────
+
+DISCORD_AUTHORIZE_URL = "https://discord.com/api/oauth2/authorize"
+DISCORD_TOKEN_URL = "https://discord.com/api/oauth2/token"
+DISCORD_USER_URL = "https://discord.com/api/users/@me"
+
+
+def _frontend_admin_url() -> str:
+    return os.environ.get("ADMIN_FRONTEND_URL", "http://localhost:3000") + "/admin"
+
+
+def _oauth_config() -> tuple[str, str, str]:
+    client_id = os.environ.get("DISCORD_CLIENT_ID", "")
+    client_secret = os.environ.get("DISCORD_CLIENT_SECRET", "")
+    redirect_uri = os.environ.get("DISCORD_REDIRECT_URI", "")
+    if not (client_id and client_secret and redirect_uri):
+        raise HTTPException(
+            status_code=503,
+            detail="Discord SSO not configured (DISCORD_CLIENT_ID / DISCORD_CLIENT_SECRET / DISCORD_REDIRECT_URI)",
+        )
+    return client_id, client_secret, redirect_uri
+
+
+def _set_cookie(resp: Response, name: str, value: str, max_age: int) -> None:
+    # SameSite=None is required because the SPA on Vercel and the API on Railway
+    # are different sites; the cookie must be sent on cross-site fetches.
+    resp.set_cookie(
+        name, value,
+        max_age=max_age, httponly=True, secure=True, samesite="none", path="/",
+    )
+
+
+@router.get("/auth/me")
+def auth_me(
+    session_cookie: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+):
+    session = _verify_session(session_cookie)
+    if session and session.get("sub") in _admin_discord_ids():
+        return {
+            "authenticated": True,
+            "discord_id": session.get("sub"),
+            "username": session.get("name"),
+            "exp": session.get("exp"),
+        }
+    return {"authenticated": False}
+
+
+@router.get("/auth/discord/login")
+def discord_login():
+    client_id, _secret, redirect_uri = _oauth_config()
+    state = secrets.token_urlsafe(24)
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "identify",
+        "state": state,
+        "prompt": "none",
+    }
+    resp = RedirectResponse(f"{DISCORD_AUTHORIZE_URL}?{urlencode(params)}", status_code=302)
+    _set_cookie(resp, OAUTH_STATE_COOKIE, state, max_age=600)
+    return resp
+
+
+@router.get("/auth/discord/callback")
+def discord_callback(
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    oauth_state: str | None = Cookie(default=None, alias=OAUTH_STATE_COOKIE),
+):
+    if error:
+        raise HTTPException(status_code=400, detail=f"Discord returned: {error}")
+    if not code or not state:
+        raise HTTPException(status_code=400, detail="Missing code or state")
+    if not oauth_state or not hmac.compare_digest(state, oauth_state):
+        raise HTTPException(status_code=400, detail="State mismatch — try again")
+
+    client_id, client_secret, redirect_uri = _oauth_config()
+    try:
+        tok = requests.post(
+            DISCORD_TOKEN_URL,
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=10,
+        )
+        tok.raise_for_status()
+        access_token = tok.json().get("access_token")
+        if not access_token:
+            raise HTTPException(status_code=502, detail="Discord did not return an access token")
+
+        ur = requests.get(
+            DISCORD_USER_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=10,
+        )
+        ur.raise_for_status()
+        user = ur.json()
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"Discord upstream error: {e}")
+
+    discord_id = str(user.get("id", ""))
+    if discord_id not in _admin_discord_ids():
+        raise HTTPException(status_code=403, detail="Not on the admin allowlist")
+    if not _signing_secret():
+        raise HTTPException(status_code=503, detail="ADMIN_TOKEN/SESSION_SECRET not set on the API")
+
+    payload = {
+        "sub": discord_id,
+        "name": user.get("username") or user.get("global_name"),
+        "exp": int(time.time()) + SESSION_TTL_SECONDS,
+    }
+    cookie_val = _sign_session(payload)
+
+    resp = RedirectResponse(_frontend_admin_url(), status_code=302)
+    _set_cookie(resp, SESSION_COOKIE, cookie_val, max_age=SESSION_TTL_SECONDS)
+    resp.delete_cookie(OAUTH_STATE_COOKIE, path="/")
+    return resp
+
+
+@router.post("/auth/logout")
+def auth_logout():
+    resp = Response(status_code=204)
+    resp.delete_cookie(SESSION_COOKIE, path="/")
+    return resp
 
 
 # ── request bodies ──────────────────────────────────────────────────────────

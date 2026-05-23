@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -57,12 +58,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# The admin control plane uses a session cookie set by the Discord OAuth
+# callback; credentialed cross-site requests require an explicit allowlist of
+# origins (a wildcard is invalid with allow_credentials=True). Public read
+# endpoints still work with `*` for anyone not sending the cookie.
+_admin_origins = [
+    o.strip() for o in os.environ.get("ADMIN_FRONTEND_URL", "").split(",") if o.strip()
+] or ["http://localhost:3000"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    # GET for the public read API; POST drives the token-authenticated admin
-    # control plane. Auth is a bearer token (not cookies), so a wildcard origin
-    # without credentials is safe.
+    allow_origins=_admin_origins,
+    allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )

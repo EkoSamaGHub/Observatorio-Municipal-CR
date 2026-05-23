@@ -6,7 +6,7 @@ import {
   RefreshCw, Server, ShieldCheck, Skull, Unlock,
 } from "lucide-react";
 import {
-  adminApi, AdminError, clearToken, getToken, setToken,
+  adminApi, AdminError, discordLoginUrl,
   type Overview, type RunSummary,
 } from "@/lib/adminApi";
 import {
@@ -18,48 +18,40 @@ import LogsPanel from "@/components/admin/LogsPanel";
 const REFRESH_MS = 5000;
 
 export default function AdminPage() {
-  // Read the token only after mount: localStorage is unavailable during SSR,
-  // and reading it in a lazy initializer would cause a hydration mismatch.
+  // null = still probing; false = not signed in; true = session is valid.
   const [authed, setAuthed] = useState<boolean | null>(null);
+  const [probeError, setProbeError] = useState<string | null>(null);
 
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setAuthed(!!getToken());
+  const probe = useCallback(async () => {
+    try {
+      const me = await adminApi.me();
+      setAuthed(me.authenticated);
+      setProbeError(null);
+    } catch (err) {
+      const e = err as AdminError;
+      setAuthed(false);
+      setProbeError(
+        e.status === 503 ? "Admin is disabled on the server (ADMIN_TOKEN not set)."
+        : `Could not reach the admin API: ${e.message}`
+      );
+    }
   }, []);
 
+  useEffect(() => { probe(); }, [probe]);
+
+  async function logout() {
+    try { await adminApi.logout(); } catch { /* clear UI even if request fails */ }
+    setAuthed(false);
+  }
+
   if (authed === null) return null;
-  if (!authed) return <Login onAuthed={() => setAuthed(true)} />;
-  return <Dashboard onLogout={() => { clearToken(); setAuthed(false); }} />;
+  if (!authed) return <Login error={probeError} />;
+  return <Dashboard onLogout={logout} />;
 }
 
 // ── login gate ──────────────────────────────────────────────────────────────
 
-function Login({ onAuthed }: { onAuthed: () => void }) {
-  const [value, setValue] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
-    setToken(value.trim());
-    try {
-      await adminApi.overview();
-      onAuthed();
-    } catch (err) {
-      clearToken();
-      const e2 = err as AdminError;
-      setError(
-        e2.status === 503 ? "Admin is disabled on the server (ADMIN_TOKEN not set)."
-        : e2.status === 401 ? "Invalid token."
-        : `Could not reach the admin API: ${e2.message}`
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
+function Login({ error }: { error: string | null }) {
   return (
     <div className="max-w-sm mx-auto mt-16">
       <Card className="p-6">
@@ -72,21 +64,19 @@ function Login({ onAuthed }: { onAuthed: () => void }) {
             <p className="text-xs text-slate-400">Crawler operations</p>
           </div>
         </div>
-        <form onSubmit={submit} className="space-y-3">
-          <input
-            type="password"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder="Admin token"
-            autoFocus
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-          />
-          {error && <p className="text-xs text-rose-600">{error}</p>}
-          <button type="submit" disabled={busy || !value.trim()}
-            className="w-full bg-blue-900 text-white font-semibold rounded-lg py-2 text-sm hover:bg-blue-800 disabled:opacity-50">
-            {busy ? "Verifying…" : "Enter"}
-          </button>
-        </form>
+        {error && <p className="text-xs text-rose-600 mb-3">{error}</p>}
+        <a
+          href={discordLoginUrl()}
+          className="w-full inline-flex items-center justify-center gap-2 bg-[#5865F2] hover:bg-[#4752c4] text-white font-semibold rounded-lg py-2 text-sm">
+          {/* Discord logo */}
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M20.317 4.369A19.79 19.79 0 0 0 16.558 3a.074.074 0 0 0-.079.037 13.83 13.83 0 0 0-.61 1.25 18.27 18.27 0 0 0-5.487 0 12.65 12.65 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.74 19.74 0 0 0 5.93 4.369a.07.07 0 0 0-.032.027C2.533 9.043 1.616 13.58 2.066 18.057a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.077.077 0 0 0 .084-.027 14.2 14.2 0 0 0 1.226-1.994.075.075 0 0 0-.041-.104 13.1 13.1 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.371-.292a.074.074 0 0 1 .078-.01c3.927 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .079.009c.12.1.245.199.372.293a.077.077 0 0 1-.006.128 12.3 12.3 0 0 1-1.873.891.076.076 0 0 0-.04.105c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .031-.055c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028zM8.02 15.331c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.974 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
+          </svg>
+          Sign in with Discord
+        </a>
+        <p className="text-[11px] text-slate-400 mt-3 text-center">
+          Only allowlisted Discord accounts can access this control center.
+        </p>
       </Card>
     </div>
   );
@@ -110,7 +100,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     Promise.all([adminApi.overview(), adminApi.runs(25)])
       .then(([o, r]) => { setOverview(o); setRuns(r); setErr(null); })
       .catch((e: AdminError) => {
-        if (e.status === 401) { clearToken(); onLogout(); }
+        if (e.status === 401) { onLogout(); }
         else setErr(e.message);
       });
   }, [onLogout]);
