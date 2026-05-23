@@ -91,6 +91,52 @@ class _SQLiteConn:
         return self._c.total_changes
 
 
+# ── Postgres connection pool ────────────────────────────────────────────────
+#
+# A process-wide bounded pool. Before this, every get_connection() opened a
+# brand-new Postgres connection (each with a ~15s SSL handshake). Under load
+# (parallel crawl workers + the API server-rendering pages) that exhausted
+# Timescale's connection limit, the API's queries blocked waiting for a
+# connection, SSR hung, and the site went down. The pool caps concurrent
+# connections per process and reuses them, so a connection is always cheap.
+#
+# Created lazily (NOT at import) so it is never inherited across a fork — each
+# worker/uvicorn process gets its own pool.
+
+_pg_pool = None
+
+
+def _get_pg_pool():
+    global _pg_pool
+    if _pg_pool is None:
+        from urllib.parse import urlparse, parse_qs
+
+        from psycopg.rows import dict_row
+        from psycopg_pool import ConnectionPool
+
+        r = urlparse(DATABASE_URL)
+        qs = {k: v[0] for k, v in parse_qs(r.query).items()}
+        conn_kwargs = dict(
+            host=r.hostname,
+            port=r.port or 5432,
+            dbname=(r.path or "/tsdb").lstrip("/"),
+            user=r.username,
+            password=r.password,
+            sslmode=qs.get("sslmode", "require"),
+            connect_timeout=15,
+            row_factory=dict_row,
+        )
+        _pg_pool = ConnectionPool(
+            min_size=1,
+            max_size=int(os.environ.get("DB_POOL_MAX", "4")),
+            timeout=int(os.environ.get("DB_POOL_TIMEOUT", "20")),
+            max_idle=60,
+            kwargs=conn_kwargs,
+            open=True,
+        )
+    return _pg_pool
+
+
 # ── Postgres helpers ──────────────────────────────────────────────────────────
 
 class _PgCursor:
@@ -123,25 +169,9 @@ class _PgCursor:
 
 
 class _PgConn:
-    def __init__(self, url: str):
-        # psycopg3 (psycopg[binary]) uses non-blocking connection internals
-        # so connect_timeout actually covers the SSL handshake phase —
-        # unlike psycopg2-binary / libpq which hangs indefinitely in SSL.
-        import psycopg
-        from psycopg.rows import dict_row
-        from urllib.parse import urlparse, parse_qs
-        r = urlparse(url)
-        qs = {k: v[0] for k, v in parse_qs(r.query).items()}
-        self._c = psycopg.connect(
-            host=r.hostname,
-            port=r.port or 5432,
-            dbname=(r.path or "/tsdb").lstrip("/"),
-            user=r.username,
-            password=r.password,
-            sslmode=qs.get("sslmode", "require"),
-            connect_timeout=15,
-            row_factory=dict_row,
-        )
+    def __init__(self):
+        self._pool = _get_pg_pool()
+        self._c = self._pool.getconn()
 
     def execute(self, sql: str, params=None) -> _PgCursor:
         cur = _PgCursor(self._c.cursor())
@@ -154,7 +184,24 @@ class _PgConn:
         self._c.commit()
 
     def close(self):
-        self._c.close()
+        # Return the connection to the pool instead of closing it. Roll back any
+        # open transaction first so the next borrower starts clean (and any
+        # FOR UPDATE locks are released).
+        if self._c is None:
+            return
+        try:
+            self._c.rollback()
+        except Exception:
+            pass
+        try:
+            self._pool.putconn(self._c)
+        except Exception:
+            try:
+                self._c.close()
+            except Exception:
+                pass
+        finally:
+            self._c = None
 
     @property
     def total_changes(self) -> int:
@@ -165,7 +212,7 @@ class _PgConn:
 
 def get_connection() -> _SQLiteConn | _PgConn:
     if DATABASE_URL:
-        return _PgConn(DATABASE_URL)
+        return _PgConn()
     return _SQLiteConn()
 
 
