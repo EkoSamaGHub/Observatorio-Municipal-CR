@@ -74,8 +74,11 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
+      # 2 workers keeps peak concurrent DB connections well under Timescale's
+      # limit (workers + Railway API + reaper share one pool). Raising this risks
+      # exhausting connections and hanging the API/SSR.
       matrix:
-        worker: [1, 2, 3, 4]
+        worker: [1, 2]
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
     steps:
