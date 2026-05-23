@@ -34,3 +34,6 @@ migration_log.txt
 # OS
 .DS_Store
 Thumbs.db
+
+# Local-only setup script (holds Railway API token + Discord secret when run)
+scripts/setup_admin_sso.ps1
