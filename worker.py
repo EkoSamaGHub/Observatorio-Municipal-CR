@@ -10,12 +10,16 @@ Phase 2 (Monitor):  Once coverage is 100%, re-checks every municipality every
 
 Deploy as a separate Railway service from the same repo:
   Start command: python -u worker.py
+  Env var:       WORKER_MODE=1
 """
 
 import json
-import time
+import os
 import sys
+import time
+import threading
 from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from configs.db import get_connection
 from configs.init_db import init_db
@@ -27,6 +31,35 @@ MONITOR_INTERVAL_HOURS = 6
 # Pause between discover retries when pipeline exits early (seconds)
 DISCOVER_RETRY_DELAY = 60
 
+# Current worker status — updated by main loop, served by health endpoint
+_status = {"phase": "starting", "coverage": "?/?", "last_updated": None}
+
+
+# ── Tiny health-check HTTP server ────────────────────────────────────────────
+# Railway requires a process to bind $PORT or it marks the deployment failed.
+# We run this in a background daemon thread so the main crawler thread can run.
+
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = json.dumps(_status).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, fmt, *args):
+        pass  # suppress per-request access logs
+
+
+def _start_health_server():
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), _HealthHandler)
+    logger.info(f"[worker] Health server listening on port {port}")
+    server.serve_forever()
+
+
+# ── Core helpers ─────────────────────────────────────────────────────────────
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -48,8 +81,6 @@ def get_coverage() -> tuple[int, int]:
 
 
 def run_discover():
-    """Run one discover pass for missing municipalities."""
-    # Import here so Railway logs show the import at run time, not startup
     from pipeline import run_pipeline
     logger.info(f"[worker] Starting discover pass — {_now()}")
     run_pipeline(mode="discover", only_missing=True)
@@ -57,24 +88,32 @@ def run_discover():
 
 
 def run_monitor():
-    """Run one monitor pass over all indexed municipalities."""
     from pipeline import run_pipeline
     logger.info(f"[worker] Starting monitor pass — {_now()}")
     run_pipeline(mode="monitor")
     logger.info(f"[worker] Monitor pass complete — {_now()}")
 
 
+# ── Main loop ─────────────────────────────────────────────────────────────────
+
 def main():
     logger.info("=" * 60)
     logger.info("MUNI84CR Worker starting up")
     logger.info("=" * 60)
 
+    # Start health-check server in background daemon thread
+    t = threading.Thread(target=_start_health_server, daemon=True)
+    t.start()
+
     init_db()
 
     # ── Phase 1: Discover ────────────────────────────────────────
+    _status["phase"] = "discover"
     while True:
         indexed, total = get_coverage()
         pct = indexed / total * 100 if total else 0
+        _status["coverage"] = f"{indexed}/{total}"
+        _status["last_updated"] = _now()
         logger.info(f"[worker] Coverage: {indexed}/{total} ({pct:.1f}%)")
 
         if indexed >= total:
@@ -90,10 +129,10 @@ def main():
             time.sleep(DISCOVER_RETRY_DELAY)
             continue
 
-        # Brief pause before re-checking coverage
         time.sleep(10)
 
     # ── Phase 2: Monitor loop ────────────────────────────────────
+    _status["phase"] = "monitor"
     while True:
         try:
             run_monitor()
@@ -101,6 +140,8 @@ def main():
             logger.error(f"[worker] Monitor pass failed: {e}")
 
         indexed, total = get_coverage()
+        _status["coverage"] = f"{indexed}/{total}"
+        _status["last_updated"] = _now()
         logger.info(f"[worker] Post-monitor coverage: {indexed}/{total}")
         logger.info(f"[worker] Next monitor pass in {MONITOR_INTERVAL_HOURS}h")
         time.sleep(MONITOR_INTERVAL_HOURS * 3600)

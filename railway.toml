@@ -8,7 +8,7 @@ builder = "nixpacks"
 [deploy]
 startCommand = "sh -c 'if [ -n \"$WORKER_MODE\" ]; then python -u worker.py; else uvicorn api.main:app --host 0.0.0.0 --port $PORT; fi'"
 healthcheckPath = "/"
-healthcheckTimeout = 30
+healthcheckTimeout = 60
 restartPolicyType = "on_failure"
 
 # ── Crawler worker service ───────────────────────────────────────
