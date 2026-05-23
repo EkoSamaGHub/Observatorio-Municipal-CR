@@ -1,16 +1,11 @@
 """
-Railway worker — permanent background process for the MUNI84CR pipeline.
+MUNI84CR Railway worker — crawl pipeline + HTTP health check.
 
-Architecture:
-  - Main thread:       tiny HTTP server on $PORT (keeps Railway's health check happy)
-  - Background thread: the actual crawl pipeline (discover -> monitor loop)
+Main thread:       HTTPServer on $PORT  (satisfies Railway health check)
+Background thread: discover -> monitor pipeline loop
 
-Phase 1 (Discover): Runs --only-missing until all 84 municipalities indexed.
-Phase 2 (Monitor):  Re-checks all municipalities every MONITOR_INTERVAL_HOURS hours.
-
-Deploy as a second Railway service from the same GitHub repo:
-  Start command: cd /app && python -u worker.py
-  Env var:       WORKER_MODE=1
+Start command: cd /app && python -u worker.py
+Env vars:      WORKER_MODE=1  DATABASE_URL=<postgres url>
 """
 
 import json
@@ -21,26 +16,22 @@ import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-# ── Shared state (read by HTTP handler, written by pipeline thread) ───────────
-_state = {
-    "service": "crawler-worker",
-    "phase": "starting",
-    "coverage": "?/?",
-    "last_run": None,
-    "status": "ok",
-}
+print("worker.py: STARTED", flush=True)
 
-MONITOR_INTERVAL_HOURS = 6
-DISCOVER_RETRY_DELAY   = 60
+PORT = int(os.environ.get("PORT", 8080))
+MONITOR_HOURS  = 6
+RETRY_DELAY    = 60
+
+_state = {"phase": "starting", "coverage": "?/?", "last_run": None, "status": "ok"}
 
 
-def _now() -> str:
+def _now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
-# ── Tiny health-check HTTP server (main thread) ───────────────────────────────
+# ── Health check HTTP server ──────────────────────────────────────────────────
 
-class _Handler(BaseHTTPRequestHandler):
+class _H(BaseHTTPRequestHandler):
     def do_GET(self):
         body = json.dumps(_state, indent=2).encode()
         self.send_response(200)
@@ -48,34 +39,28 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
-
-    def log_message(self, *args):
-        pass  # silence per-request logs
+    def log_message(self, *a): pass
 
 
-# ── Database helpers ──────────────────────────────────────────────────────────
+# ── Pipeline thread ───────────────────────────────────────────────────────────
 
-def get_coverage() -> tuple[int, int]:
-    """Returns (indexed_count, total_count). Safe to call from any thread."""
+def get_coverage():
     from configs.db import get_connection
-    with open("municipalities.json", "r", encoding="utf-8") as f:
+    with open("municipalities.json", encoding="utf-8") as f:
         total = len(json.load(f))
     conn = get_connection()
     try:
         row = conn.execute(
             "SELECT COUNT(DISTINCT municipality_id) AS cnt FROM pages"
         ).fetchone()
-        # fetchone() returns a dict (RealDictCursor on Postgres, dict() on SQLite)
         indexed = list(row.values())[0] if row else 0
     finally:
         conn.close()
     return int(indexed), int(total)
 
 
-# ── Pipeline loop (background daemon thread) ──────────────────────────────────
-
 def pipeline_loop():
-    time.sleep(3)  # let HTTP server bind first
+    time.sleep(3)  # give HTTP server time to bind first
 
     from configs.init_db import init_db
     from modules.logger import logger
@@ -85,84 +70,69 @@ def pipeline_loop():
 
     try:
         init_db()
-        logger.info("[worker] DB initialised")
+        logger.info("[worker] DB ready")
     except Exception as e:
         logger.error(f"[worker] init_db failed: {e}")
         _state["status"] = f"init_db error: {e}"
         return
 
-    # ── Phase 1: Discover ────────────────────────────────────────
+    # Phase 1 — Discover until 84/84
     _state["phase"] = "discover"
     while True:
         try:
             indexed, total = get_coverage()
         except Exception as e:
-            logger.error(f"[worker] Coverage check failed: {e}")
+            logger.error(f"[worker] coverage check error: {e}")
             time.sleep(30)
             continue
 
         pct = indexed / total * 100 if total else 0
-        _state["coverage"] = f"{indexed}/{total} ({pct:.1f}%)"
-        _state["last_run"] = _now()
+        _state.update(coverage=f"{indexed}/{total} ({pct:.1f}%)", last_run=_now())
         logger.info(f"[worker] Coverage: {indexed}/{total} ({pct:.1f}%)")
 
         if indexed >= total:
             logger.info("[worker] 100% coverage — switching to monitor mode")
             break
 
-        logger.info(f"[worker] {total - indexed} missing — running discover pass...")
+        logger.info(f"[worker] {total - indexed} missing — running discover...")
         try:
             run_pipeline(mode="discover", only_missing=True)
-            logger.info("[worker] Discover pass complete")
             _state["status"] = "ok"
         except Exception as e:
-            logger.error(f"[worker] Discover error: {e}")
-            _state["status"] = f"discover error: {e}"
-            time.sleep(DISCOVER_RETRY_DELAY)
-
+            logger.error(f"[worker] discover error: {e}")
+            _state["status"] = f"error: {e}"
+            time.sleep(RETRY_DELAY)
         time.sleep(10)
 
-    # ── Phase 2: Monitor loop ────────────────────────────────────
+    # Phase 2 — Monitor every N hours
     _state["phase"] = "monitor"
     while True:
-        logger.info(f"[worker] Starting monitor pass — {_now()}")
+        logger.info(f"[worker] Monitor pass — {_now()}")
         try:
             run_pipeline(mode="monitor")
-            logger.info("[worker] Monitor pass complete")
             _state["status"] = "ok"
         except Exception as e:
-            logger.error(f"[worker] Monitor error: {e}")
-            _state["status"] = f"monitor error: {e}"
+            logger.error(f"[worker] monitor error: {e}")
+            _state["status"] = f"error: {e}"
 
         try:
-            indexed, total = get_coverage()
-            _state["coverage"] = f"{indexed}/{total}"
-            _state["last_run"] = _now()
+            i, t = get_coverage()
+            _state.update(coverage=f"{i}/{t}", last_run=_now())
         except Exception:
             pass
 
-        logger.info(f"[worker] Next monitor pass in {MONITOR_INTERVAL_HOURS}h")
-        time.sleep(MONITOR_INTERVAL_HOURS * 3600)
+        logger.info(f"[worker] Sleeping {MONITOR_HOURS}h")
+        time.sleep(MONITOR_HOURS * 3600)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-def main():
-    port = int(os.environ.get("PORT", 8080))
-    print(f"[worker] Starting on port {port} | WORKER_MODE={os.environ.get('WORKER_MODE','?')}", flush=True)
+print(f"worker.py: binding to port {PORT}", flush=True)
+print(f"worker.py: WORKER_MODE={os.environ.get('WORKER_MODE', 'NOT SET')}", flush=True)
 
-    # Pipeline in background, HTTP server in foreground
-    t = threading.Thread(target=pipeline_loop, daemon=True, name="pipeline")
-    t.start()
+threading.Thread(target=pipeline_loop, daemon=True, name="pipeline").start()
 
-    server = HTTPServer(("0.0.0.0", port), _Handler)
-    print(f"[worker] Health server ready on :{port}", flush=True)
-    server.serve_forever()
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("[worker] Interrupted.", flush=True)
-        sys.exit(0)
+print("worker.py: starting HTTPServer...", flush=True)
+server = HTTPServer(("0.0.0.0", PORT), _H)
+print(f"worker.py: listening on port {PORT} — health check ready", flush=True)
+server.serve_forever()
