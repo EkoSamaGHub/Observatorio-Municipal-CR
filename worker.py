@@ -16,7 +16,7 @@ import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-print("worker.py: STARTED BUILD=8f7ae6d-DIAG", flush=True)
+print("worker.py: STARTED BUILD=cfefa39-PSYCOPG3", flush=True)
 
 PORT = int(os.environ.get("PORT", 8080))
 MONITOR_HOURS  = 6
@@ -139,7 +139,7 @@ def pipeline_loop():
     _t.start()
     _t.join(timeout=25)
     if _t.is_alive():
-        log.error("[worker] init_db timed out after 25 s — psycopg2 SSL hung")
+        log.error("[worker] init_db timed out after 25 s — check DB connectivity")
         _state["status"] = "init_db_timeout"
         return
     if isinstance(_init_result[0], Exception):

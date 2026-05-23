@@ -18,4 +18,4 @@ uvicorn[standard]
 psycopg[binary]
 python-dotenv
 python-whois
-# cache-bust: 20260523-V3-PSYCOPG3
+# cache-bust: 20260524-V4-PSYCOPG3-FORCE
