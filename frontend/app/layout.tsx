@@ -4,6 +4,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import "./globals.css";
 import Navbar from "@/components/Navbar";
+import Footer from "@/components/Footer";
 
 export const metadata: Metadata = {
   title: {
@@ -26,25 +27,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <main className="flex-1 container mx-auto px-4 max-w-7xl py-8">
             {children}
           </main>
-          <footer className="border-t border-slate-200 bg-white mt-16">
-            <div className="container mx-auto px-4 max-w-7xl py-8 flex flex-col sm:flex-row items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-7 h-7 rounded-md bg-blue-900 flex items-center justify-center shrink-0">
-                  <svg viewBox="0 0 24 24" fill="none" className="w-4 h-4 text-white" stroke="currentColor" strokeWidth="1.8">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 21v-8.25M15.75 21v-8.25M8.25 21v-8.25M3 9l9-6 9 6m-1.5 12V10.332A48.36 48.36 0 0 0 12 9.75c-2.551 0-5.056.2-7.5.582V21M3 21h18M12 6.75h.008v.008H12V6.75Z" />
-                  </svg>
-                </div>
-                <span className="text-sm text-slate-600 font-medium">Observatorio Municipal de Costa Rica</span>
-              </div>
-              <div className="flex items-center gap-6 text-xs text-slate-400">
-                <span>84 municipalidades</span>
-                <span className="w-1 h-1 rounded-full bg-slate-300" />
-                <span>Datos públicos</span>
-                <span className="w-1 h-1 rounded-full bg-slate-300" />
-                <span>© 2026</span>
-              </div>
-            </div>
-          </footer>
+          <Footer />
         </NextIntlClientProvider>
       </body>
     </html>
