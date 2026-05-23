@@ -105,8 +105,16 @@ export interface SearchResult {
   last_crawled: string | null;
 }
 
+// Hard timeout so a slow/overloaded backend can never hang server-side
+// rendering and abort the whole page (ERR_CONNECTION_ABORTED). On timeout the
+// fetch rejects and callers fall back to empty/offline state instead of hanging.
+const FETCH_TIMEOUT_MS = 8000;
+
 async function apiFetch<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { next: { revalidate: 60 } });
+  const res = await fetch(`${API_BASE}${path}`, {
+    next: { revalidate: 60 },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) throw new Error(`API error ${res.status}: ${path}`);
   return res.json();
 }
@@ -134,7 +142,10 @@ export const api = {
     apiFetch<CrawlRun[]>("/runs"),
 
   getActiveRun: () =>
-    fetch(`${API_BASE}/runs/active`, { cache: "no-store" })
+    fetch(`${API_BASE}/runs/active`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    })
       .then((r) => r.json() as Promise<ActiveRun>)
       .catch(() => ({ active: false }) as ActiveRun),
 

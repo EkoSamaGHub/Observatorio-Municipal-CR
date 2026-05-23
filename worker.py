@@ -210,11 +210,13 @@ def pipeline_loop():
             log.error(f"[worker] {mode} run error: {exc}")
             _state["status"] = f"error: {exc}"
 
-    # Phase 1 — one bounded discover pass for unindexed municipalities.
-    # Bounded by max_attempts: permanently-broken sites become 'dead' instead of
-    # being retried forever (the old infinite-loop retry storm is gone).
-    _state["phase"] = "discover"
-    _drive("discover", only_missing=True, budget_hours=6)
+    # Phase 1 — discovery is OWNED BY GITHUB ACTIONS (the canonical crawler).
+    # Running it here too would double the crawl load and the concurrent DB
+    # connections, which can exhaust Timescale's limit and hang the API/SSR.
+    # Opt in explicitly with WORKER_DISCOVER=1 only if Actions is unavailable.
+    if os.environ.get("WORKER_DISCOVER"):
+        _state["phase"] = "discover"
+        _drive("discover", only_missing=True, budget_hours=6)
 
     # Phase 2 — periodic monitor passes (watchdog).
     _state["phase"] = "monitor"
