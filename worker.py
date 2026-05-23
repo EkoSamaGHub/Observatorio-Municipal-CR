@@ -21,6 +21,10 @@ import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+# Boot marker — confirms this version of worker.py is executing
+print("=== MUNI84CR WORKER v3 BOOT ===", flush=True)
+print(f"    cwd={os.getcwd()}  PORT={os.environ.get('PORT','?')}  WORKER_MODE={os.environ.get('WORKER_MODE','?')}", flush=True)
+
 # ── Worker state (shared between HTTP thread and pipeline thread) ─────────────
 _state = {
     "phase": "starting",
