@@ -154,69 +154,78 @@ def pipeline_loop():
         return
     log.info("[worker] DB ready")
 
+    from configs.db import get_connection
+    from crawler_cli import drive_queue
+    from modules import task_queue
+    from pipeline import select_municipality_ids
+
     # ── Reap orphaned runs ────────────────────────────────────────────────────
-    # A fresh container has not started any run yet, so any crawl_runs row with
-    # finished_at IS NULL is a zombie left by a previously killed process
-    # (Railway redeploy / OOM / SIGKILL — atexit never fired). Close them so the
-    # UI stops showing a dead crawl as "running".
+    # Close legacy (task-less) runs left NULL by a previously killed process —
+    # atexit never fires on SIGKILL — then finalize/requeue any task-based runs.
     try:
-        from configs.db import get_connection
         c = get_connection()
         c.execute(
-            "UPDATE crawl_runs SET finished_at=%s WHERE finished_at IS NULL",
+            "UPDATE crawl_runs SET finished_at=%s, status='done' "
+            "WHERE finished_at IS NULL "
+            "AND id NOT IN (SELECT DISTINCT run_id FROM crawl_tasks)",
             (_now_iso(),),
         )
         c.commit()
         c.close()
-        log.info("[worker] reaped orphaned (unfinished) crawl_runs")
+        task_queue.reap_all_active()
+        log.info("[worker] reaped orphaned runs / requeued stale tasks")
     except Exception as e:
         log.error(f"[worker] orphan-run reap failed: {e}")
 
-    # Phase 1 — Discover until 84/84
-    _state["phase"] = "discover"
-    while True:
+    # ── Background reaper ──────────────────────────────────────────────────────
+    # Continuously requeues tasks abandoned by crashed workers (e.g. timed-out
+    # GitHub Actions jobs) and finalizes runs once every task is terminal.
+    def _reaper_loop():
+        while True:
+            try:
+                task_queue.reap_all_active()
+            except Exception as exc:
+                log.error(f"[reaper] {exc}")
+            time.sleep(300)
+    threading.Thread(target=_reaper_loop, daemon=True, name="reaper").start()
+
+    def _drive(mode: str, only_missing: bool, budget_hours: float):
+        ids = select_municipality_ids(mode, only_missing=only_missing)
+        if not ids:
+            log.info(f"[worker] {mode}: nothing to enqueue")
+            return
+        run_id = task_queue.create_run(ids, mode, worker_id="railway")
+        log.info(f"[worker] {mode} run {run_id}: {len(ids)} municipalities enqueued")
         try:
-            indexed, total = get_coverage()
-        except Exception as e:
-            log.error(f"[worker] coverage check error: {e}")
-            time.sleep(30)
-            continue
-
-        pct = indexed / total * 100 if total else 0
-        _state.update(coverage=f"{indexed}/{total} ({pct:.1f}%)", last_run=_now())
-        log.info(f"[worker] Coverage: {indexed}/{total} ({pct:.1f}%)")
-
-        if indexed >= total:
-            log.info("[worker] 100% coverage — switching to monitor mode")
-            break
-
-        log.info(f"[worker] {total - indexed} missing — running discover...")
-        try:
-            run_pipeline(mode="discover", only_missing=True)
+            prog = drive_queue(
+                run_id, worker_id=f"railway-{os.getpid()}",
+                time_budget=int(budget_hours * 3600),
+                request_delay=2.0, max_pages=1000, max_depth=2,
+            )
             _state["status"] = "ok"
-        except Exception as e:
-            log.error(f"[worker] discover error: {e}")
-            _state["status"] = f"error: {e}"
-            time.sleep(RETRY_DELAY)
-        time.sleep(10)
+            _state.update(coverage=f"{prog['done']}/{prog['total']} "
+                                   f"(done={prog['done']} dead={prog['dead']})",
+                          last_run=_now())
+        except Exception as exc:
+            log.error(f"[worker] {mode} run error: {exc}")
+            _state["status"] = f"error: {exc}"
 
-    # Phase 2 — Monitor every N hours
+    # Phase 1 — one bounded discover pass for unindexed municipalities.
+    # Bounded by max_attempts: permanently-broken sites become 'dead' instead of
+    # being retried forever (the old infinite-loop retry storm is gone).
+    _state["phase"] = "discover"
+    _drive("discover", only_missing=True, budget_hours=6)
+
+    # Phase 2 — periodic monitor passes (watchdog).
     _state["phase"] = "monitor"
     while True:
         log.info(f"[worker] Monitor pass — {_now()}")
-        try:
-            run_pipeline(mode="monitor")
-            _state["status"] = "ok"
-        except Exception as e:
-            log.error(f"[worker] monitor error: {e}")
-            _state["status"] = f"error: {e}"
-
+        _drive("monitor", only_missing=False, budget_hours=MONITOR_HOURS)
         try:
             i, t = get_coverage()
             _state.update(coverage=f"{i}/{t}", last_run=_now())
         except Exception:
             pass
-
         log.info(f"[worker] Sleeping {MONITOR_HOURS}h")
         time.sleep(MONITOR_HOURS * 3600)
 

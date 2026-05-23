@@ -80,18 +80,31 @@ class ScraplingCrawler(BaseCrawler):
         known_urls: set[str] | None = None,
         seed_links: set[str] | None = None,
         sitemap_urls: list[str] | None = None,
+        on_batch=None,
+        batch_size: int = 50,
     ) -> CrawlSummary:
+        """
+        on_batch — optional callable(list[CrawlResult]). When provided, fetched
+        pages are flushed to it in chunks of `batch_size` and then dropped from
+        memory (their large `html` payloads are not retained). This keeps RAM
+        bounded on large sites and makes stored work durable mid-crawl. When
+        omitted, all results are retained in summary.results (legacy behaviour).
+        """
         if mode not in CRAWL_MODES:
             raise ValueError(f"mode must be one of {CRAWL_MODES}")
 
         if mode == "monitor":
-            return self._crawl_monitor(municipality_id, known_urls or set())
+            return self._crawl_monitor(
+                municipality_id, known_urls or set(),
+                on_batch=on_batch, batch_size=batch_size,
+            )
 
         return self._crawl_discover(
             municipality_id, root_url, max_depth,
             known_urls=known_urls or set(),
             seed_links=seed_links or set(),
             sitemap_urls=sitemap_urls or [],
+            on_batch=on_batch, batch_size=batch_size,
         )
 
     def _crawl_discover(
@@ -102,6 +115,8 @@ class ScraplingCrawler(BaseCrawler):
         known_urls: set[str],
         seed_links: set[str],
         sitemap_urls: list[str],
+        on_batch=None,
+        batch_size: int = 50,
     ) -> CrawlSummary:
         root_domain = urlparse(root_url).netloc
         visited: set[str] = set(known_urls)
@@ -167,8 +182,19 @@ class ScraplingCrawler(BaseCrawler):
                     if normalize_url(link) not in visited:
                         queue.append((link, depth + 1))
 
+            # Stream + drop: flush a full batch so html is not held for the
+            # whole site, and stored work survives a crash mid-crawl.
+            if on_batch and len(results) >= batch_size:
+                on_batch(results)
+                results = []
+
             if self.request_delay:
                 time.sleep(self.request_delay)
+
+        if on_batch:
+            if results:
+                on_batch(results)
+            results = []
 
         completeness = (fetched / sitemap_total * 100) if sitemap_total > 0 else 0.0
 
@@ -186,7 +212,8 @@ class ScraplingCrawler(BaseCrawler):
             completeness_pct=round(completeness, 1),
         )
 
-    def _crawl_monitor(self, municipality_id: str, known_urls: set[str]) -> CrawlSummary:
+    def _crawl_monitor(self, municipality_id: str, known_urls: set[str],
+                       on_batch=None, batch_size: int = 50) -> CrawlSummary:
         results: list[CrawlResult] = []
 
         if not known_urls:
@@ -195,19 +222,29 @@ class ScraplingCrawler(BaseCrawler):
 
         logger.info(f"[{municipality_id}] monitor: re-checking {len(known_urls)} known pages")
 
+        fetched = 0
         for url in known_urls:
             if self.respect_robots and not is_allowed(url):
                 continue
             logger.info(f"[{municipality_id}][monitor] {url}")
             result = self.fetch(url, municipality_id=municipality_id, depth=0)
             results.append(result)
+            fetched += 1
+            if on_batch and len(results) >= batch_size:
+                on_batch(results)
+                results = []
             if self.request_delay:
                 time.sleep(self.request_delay)
+
+        if on_batch:
+            if results:
+                on_batch(results)
+            results = []
 
         return CrawlSummary(
             results=results,
             terminated_by="complete",
-            pages_fetched=len(results),
+            pages_fetched=fetched,
         )
 
     def _extract(self, response, base_url: str) -> tuple[list[str], list[str], list[str]]:

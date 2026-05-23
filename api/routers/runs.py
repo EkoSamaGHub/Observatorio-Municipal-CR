@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from api.deps import get_db
 from api.schemas import CrawlRun
 from configs.db import BACKEND
+from modules import task_queue
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -54,23 +55,48 @@ def _is_stale(ts) -> bool:
 @router.get("/active")
 def get_active_run(db=Depends(get_db)):
     run = db.execute(
-        "SELECT * FROM crawl_runs WHERE finished_at IS NULL ORDER BY started_at DESC LIMIT 1"
+        "SELECT * FROM crawl_runs WHERE status='running' OR finished_at IS NULL "
+        "ORDER BY started_at DESC LIMIT 1"
     ).fetchone()
 
     if not run:
         return {"active": False}
 
     started_at = run["started_at"]
+    munis_with_data = db.execute(
+        "SELECT COUNT(DISTINCT municipality_id) AS n FROM pages"
+    ).fetchone()["n"]
 
-    # Newest page write for this run; if it's stale (or there is none), the
-    # run is a zombie — report inactive rather than "running" forever.
+    # Does this run use the task queue?
+    has_tasks = db.execute(
+        "SELECT COUNT(*) AS n FROM crawl_tasks WHERE run_id=%s", (run["id"],)
+    ).fetchone()["n"] > 0
+
+    if has_tasks:
+        prog = task_queue.run_progress(run["id"])
+        # Liveness = recent heartbeat. No heartbeat in the staleness window means
+        # every worker on this run is dead → report inactive (no zombie state).
+        if _is_stale(prog["last_heartbeat"] or run.get("last_heartbeat") or started_at):
+            return {"active": False}
+        return {
+            "active": True,
+            "run_id": run["id"],
+            "started_at": started_at,
+            "municipalities_done": prog["done"],
+            "municipalities_with_data": munis_with_data,
+            "municipalities_total": prog["total"] or 84,
+            "pages_crawled": prog["pages"],
+            "current_municipality": prog["current_municipality"],
+            "current_url": None,
+            "failed": prog["failed"] + prog["dead"],
+            "pct": prog["pct"],
+        }
+
+    # Legacy (task-less) run: fall back to page-write activity as the liveness proxy.
     last_activity = db.execute(
         "SELECT MAX(last_crawled) AS ts FROM pages WHERE last_crawled >= %s",
         (started_at,),
     ).fetchone()["ts"]
-
-    # Fall back to started_at so a legitimately just-started run (no pages
-    # written yet) is not prematurely flagged stale.
     if _is_stale(last_activity or started_at):
         return {"active": False}
 
@@ -78,16 +104,10 @@ def get_active_run(db=Depends(get_db)):
         "SELECT COUNT(DISTINCT municipality_id) AS n FROM pages WHERE last_crawled >= %s",
         (started_at,),
     ).fetchone()["n"]
-
-    munis_with_data = db.execute(
-        "SELECT COUNT(DISTINCT municipality_id) AS n FROM pages"
-    ).fetchone()["n"]
-
     pages_crawled = db.execute(
         "SELECT COUNT(*) AS n FROM pages WHERE last_crawled >= %s",
         (started_at,),
     ).fetchone()["n"]
-
     latest = db.execute(
         "SELECT municipality_id, url FROM pages WHERE last_crawled >= %s ORDER BY last_crawled DESC LIMIT 1",
         (started_at,),
@@ -104,6 +124,19 @@ def get_active_run(db=Depends(get_db)):
         "current_municipality": latest["municipality_id"] if latest else None,
         "current_url": latest["url"] if latest else None,
     }
+
+
+@router.get("/progress")
+def get_progress(run_id: int | None = None, db=Depends(get_db)):
+    """Task-level progress for observability. Defaults to the latest run."""
+    if run_id is None:
+        row = db.execute(
+            "SELECT id FROM crawl_runs ORDER BY started_at DESC LIMIT 1"
+        ).fetchone()
+        if not row:
+            return {"active": False}
+        run_id = row["id"]
+    return task_queue.run_progress(run_id)
 
 
 @router.get("/stats")

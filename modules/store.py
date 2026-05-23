@@ -21,15 +21,19 @@ def _extract_title_and_snippet(html: str) -> tuple[str | None, str | None]:
     return title, snippet
 
 
-def load_known_state(municipality_id: str) -> tuple[set[str], set[str]]:
+def load_known_state(municipality_id: str, conn=None) -> tuple[set[str], set[str]]:
     """Return (known_urls, seed_links) for a municipality from the DB.
 
     known_urls  — every URL already crawled; will be skipped in discover mode.
     seed_links  — all outgoing links stored from known pages; used to seed
                   the BFS queue so new pages reachable through known pages
                   are still discovered without re-fetching the known pages.
+
+    Pass `conn` to reuse an existing connection (avoids per-call SSL handshakes).
     """
-    conn = get_connection()
+    own_conn = conn is None
+    if own_conn:
+        conn = get_connection()
     try:
         rows = conn.execute(
             "SELECT url FROM pages WHERE municipality_id = %s", (municipality_id,)
@@ -44,13 +48,16 @@ def load_known_state(municipality_id: str) -> tuple[set[str], set[str]]:
         """, (municipality_id,)).fetchall()
         seed_links = {r["target_url"] for r in link_rows}
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
 
     return known_urls, seed_links
 
 
-def store_results(results: list[CrawlResult]) -> dict:
-    conn = get_connection()
+def store_results(results: list[CrawlResult], conn=None) -> dict:
+    own_conn = conn is None
+    if own_conn:
+        conn = get_connection()
     stats = {"inserted": 0, "updated": 0, "docs_inserted": 0, "links_stored": 0}
 
     try:
@@ -113,6 +120,7 @@ def store_results(results: list[CrawlResult]) -> dict:
 
         conn.commit()
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
 
     return stats

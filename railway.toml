@@ -20,6 +20,11 @@ restartPolicyType = "on_failure"
 # Required environment variables (same as the API service):
 #   DATABASE_URL  — Postgres connection string (TigerData / Railway Postgres)
 #
-# The worker automatically:
-#   1. Runs discover (--only-missing) until all 84 municipalities are indexed
-#   2. Switches to monitor mode (re-checks every 6 hours) once at 100%
+# The worker (task-queue architecture):
+#   1. Reaps orphaned runs and runs a background reaper that requeues tasks
+#      abandoned by crashed workers (incl. timed-out GitHub Actions jobs).
+#   2. Runs ONE bounded discover pass for unindexed municipalities — broken
+#      sites become 'dead' after max_attempts instead of being retried forever.
+#   3. Then performs periodic monitor passes (every 6h).
+# Canonical large discovery sweeps run in GitHub Actions (.github/workflows/
+# crawl.yml) as parallel queue workers; Railway primarily serves the API.

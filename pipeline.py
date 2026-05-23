@@ -97,94 +97,21 @@ def run_pipeline(
     for muni in municipalities:
         muni_id = muni["id"]
         name = muni["name"]
-        root_url = muni["root_url"]
-
         logger.info(f"=== {name} ({muni_id}) ===")
 
         try:
-            # ── Load known state ─────────────────────────────────────────────
-            known_urls, seed_links = load_known_state(muni_id)
-            logger.info(f"[{muni_id}] known={len(known_urls)} seed_links={len(seed_links)}")
-
-            # ── Fetch sitemap ────────────────────────────────────────────────
-            sitemap_urls: list[str] = []
-            if mode == "discover":
-                sitemap_urls = fetch_sitemap_urls(root_url)
-                total_sitemap_urls += len(sitemap_urls)
-
-            # ── Step 1: Crawl ────────────────────────────────────────────────
-            logger.info(f"Step 1: Crawl [{mode}]")
-            summary = crawler.crawl(
-                muni_id,
-                root_url,
-                max_depth=max_depth,
-                mode=mode,
-                known_urls=known_urls,
-                seed_links=seed_links,
-                sitemap_urls=sitemap_urls,
-            )
-
-            raw_results = summary.results
-
-            if not raw_results:
-                logger.info(f"{name}: nothing to crawl")
-                continue
-
-            if summary.terminated_by == "max_pages":
-                logger.warning(
-                    f"[{muni_id}] hit max_pages limit ({max_pages}) — "
-                    f"site may have more pages. Run again to continue discovery."
-                )
-
-            if summary.sitemap_total > 0:
-                logger.info(
-                    f"[{muni_id}] completeness: {summary.pages_fetched}/{summary.sitemap_total} "
-                    f"sitemap URLs = {summary.completeness_pct:.1f}%"
-                )
-
-            # ── Step 2: Extract ──────────────────────────────────────────────
-            logger.info("Step 2: Extract")
-            for result in raw_results:
-                if not result.content_type:
-                    result.content_type = classify_url(result.url)
-
-            # ── Step 3: Normalize ────────────────────────────────────────────
-            logger.info("Step 3: Normalize")
-            results = normalize_results(raw_results)
-
-            # ── Step 4: Hash (done inside CrawlResult) ───────────────────────
-            logger.info("Step 4: Hash — verified")
-
-            # ── Step 5: Diff + Store ─────────────────────────────────────────
-            logger.info("Step 5: Store")
-            changes = detect_changes(results)
-            store_stats = store_results(results)
-
-            errors = sum(1 for r in results if not r.success)
-            new_pages = store_stats["inserted"]
-            changed_pages = len(changes)
-
-            total_pages += len(results)
-            total_new += new_pages
-            total_changed += changed_pages
-            total_errors += errors
-
-            # ── Step 6: Diff report ──────────────────────────────────────────
-            logger.info(f"Step 6: Diff — {changed_pages} changes detected")
-            for change in changes:
-                logger.info(f"  CHANGED: {change['url']}")
-
-            # ── Step 7: Monitor ──────────────────────────────────────────────
+            stats = crawl_one_municipality(muni, crawler, mode, max_depth, max_pages)
+            total_pages += stats["pages"]
+            total_new += stats["new"]
+            total_changed += stats["changed"]
+            total_errors += stats["errors"]
+            total_sitemap_urls += stats["sitemap_total"]
             logger.info(
-                f"Step 7: Monitor — new={new_pages} changed={changed_pages} "
-                f"terminated_by={summary.terminated_by} errors={errors}"
+                f"{name}: fetched={stats['fetched']} new={stats['new']} "
+                f"changed={stats['changed']} sitemap={stats['sitemap_total']} "
+                f"completeness={stats['completeness']:.1f}% errors={stats['errors']} "
+                f"terminated_by={stats['terminated_by']}"
             )
-            logger.info(
-                f"{name}: crawled={len(results)} new={new_pages} changed={changed_pages} "
-                f"pdfs={store_stats['docs_inserted']} links={store_stats['links_stored']} "
-                f"sitemap={summary.sitemap_total} completeness={summary.completeness_pct:.1f}% errors={errors}"
-            )
-
         except Exception as e:
             # One bad municipality must never abort the whole pass.
             total_errors += 1
@@ -194,7 +121,7 @@ def run_pipeline(
     conn = get_connection()
     conn.execute("""
         UPDATE crawl_runs
-        SET finished_at=%s, municipalities=%s, pages_crawled=%s, pages_changed=%s,
+        SET finished_at=%s, status='done', municipalities=%s, pages_crawled=%s, pages_changed=%s,
             pages_new=%s, errors=%s, sitemap_urls_found=%s
         WHERE id=%s
     """, (
@@ -210,6 +137,83 @@ def run_pipeline(
         f"new={total_new} changed={total_changed} "
         f"sitemap_urls={total_sitemap_urls} errors={total_errors}"
     )
+
+
+def crawl_one_municipality(muni: dict, crawler, mode: str, max_depth: int,
+                           max_pages: int = 1000, on_progress=None) -> dict:
+    """Crawl + index a single municipality with bounded memory.
+
+    Pages are stored incrementally per batch over one shared DB connection;
+    `html` is released after each batch instead of buffering the whole site.
+    `on_progress(pages_so_far)` is called after each batch (used for heartbeats).
+    Returns aggregate stats. Raising propagates to the caller.
+    """
+    muni_id = muni["id"]
+    root_url = muni["root_url"]
+    stats = {"pages": 0, "new": 0, "changed": 0, "errors": 0,
+             "sitemap_total": 0, "completeness": 0.0, "fetched": 0,
+             "terminated_by": "complete"}
+
+    conn = get_connection()
+    try:
+        known_urls, seed_links = load_known_state(muni_id, conn=conn)
+        logger.info(f"[{muni_id}] known={len(known_urls)} seed_links={len(seed_links)}")
+
+        sitemap_urls: list[str] = fetch_sitemap_urls(root_url) if mode == "discover" else []
+        stats["sitemap_total"] = len(sitemap_urls)
+
+        def sink(batch):
+            for r in batch:
+                if not r.content_type:
+                    r.content_type = classify_url(r.url)
+            results = normalize_results(batch)
+            changes = detect_changes(results, conn=conn)
+            store_stats = store_results(results, conn=conn)
+            stats["pages"] += len(results)
+            stats["new"] += store_stats["inserted"]
+            stats["changed"] += len(changes)
+            stats["errors"] += sum(1 for r in results if not r.success)
+            if on_progress:
+                on_progress(stats["pages"])
+
+        summary = crawler.crawl(
+            muni_id, root_url, max_depth=max_depth, mode=mode,
+            known_urls=known_urls, seed_links=seed_links, sitemap_urls=sitemap_urls,
+            on_batch=sink,
+        )
+        stats["terminated_by"] = summary.terminated_by
+        stats["completeness"] = summary.completeness_pct
+        stats["fetched"] = summary.pages_fetched
+        if summary.terminated_by == "max_pages":
+            logger.warning(f"[{muni_id}] hit max_pages ({max_pages}); site may have more pages")
+        return stats
+    finally:
+        conn.close()
+
+
+def select_municipality_ids(mode: str, only_missing: bool = False,
+                            ids: list[str] | None = None) -> list[str]:
+    """Resolve which municipality IDs a run should cover, applying the same
+    discover/monitor/only-missing filtering the legacy pipeline used."""
+    municipalities = load_municipalities()
+    if ids:
+        municipalities = [m for m in municipalities if m["id"] in ids]
+
+    if mode == "monitor" or only_missing:
+        conn = get_connection()
+        try:
+            indexed = {
+                r["municipality_id"]
+                for r in conn.execute("SELECT DISTINCT municipality_id FROM pages").fetchall()
+            }
+        finally:
+            conn.close()
+        if mode == "monitor":
+            municipalities = [m for m in municipalities if m["id"] in indexed]
+        elif only_missing:
+            municipalities = [m for m in municipalities if m["id"] not in indexed]
+
+    return [m["id"] for m in municipalities]
 
 
 if __name__ == "__main__":

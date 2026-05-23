@@ -18,24 +18,37 @@ on:
         description: "Max pages per municipality"
         required: false
         default: "200"
+      only_missing:
+        description: "discover only municipalities not yet indexed"
+        type: boolean
+        default: false
 
 concurrency:
   group: crawl
   cancel-in-progress: false
 
-# ── Scheduled run: 3 parallel province batches ────────────────────────────────
-# Each batch covers ~28 municipalities at 200 pages × 1.0 s ≈ 1.6 h — safe
-# within the 3-hour timeout. All three run in parallel, so the full 84-muni
-# sweep completes in ~1.6 h instead of the previous ~17 h serial run.
+# ── Task-queue architecture ───────────────────────────────────────────────────
+# 1) enqueue  — one producer creates a run + one task per municipality.
+# 2) work     — N parallel workers claim tasks (Postgres FOR UPDATE SKIP LOCKED).
+#               A worker that times out simply stops; its in-flight task's lease
+#               expires and another run (or the Railway reaper) reclaims it.
+# 3) finalize — reap requeues abandoned tasks, marks exhausted ones dead, and
+#               finalizes the run once every task is terminal.
+# Workers are idempotent and resumable, so the sweep is fault-tolerant and the
+# whole 84-muni run parallelises cleanly instead of running ~17h serially.
+
+env:
+  PYTHON_VERSION: "3.11"
 
 jobs:
-  crawl-sj-al:
-    name: "Batch 1 — San José + Alajuela"
-    if: github.event_name == 'schedule'
+  enqueue:
+    name: "Enqueue run"
     runs-on: ubuntu-latest
-    timeout-minutes: 180
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    outputs:
+      run_id: ${{ steps.enq.outputs.run_id }}
+      count: ${{ steps.enq.outputs.count }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -43,92 +56,58 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install --upgrade pip && pip install -r requirements.txt
-      - run: python -c "from configs.init_db import init_db; init_db()"
-      - name: Crawl
-        run: |
-          python pipeline.py --mode discover --max-pages 200 --delay 1.0 --ids \
-            SJ001 SJ002 SJ003 SJ004 SJ005 SJ006 SJ007 SJ008 SJ009 SJ010 \
-            SJ011 SJ012 SJ013 SJ014 SJ015 SJ016 SJ017 SJ018 SJ019 SJ020 \
-            AL001 AL002 AL003 AL004 AL005 AL006 AL007 AL008
-
-  crawl-al-ca-he:
-    name: "Batch 2 — Alajuela (cont.) + Cartago + Heredia"
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - run: pip install --upgrade pip && pip install -r requirements.txt
-      - run: python -c "from configs.init_db import init_db; init_db()"
-      - name: Crawl
-        run: |
-          python pipeline.py --mode discover --max-pages 200 --delay 1.0 --ids \
-            AL009 AL010 AL011 AL012 AL013 AL014 AL015 AL016 \
-            CA001 CA002 CA003 CA004 CA005 CA006 CA007 CA008 \
-            HE001 HE002 HE003 HE004 HE005 HE006 HE007 HE008 HE009 HE010
-
-  crawl-gu-pu-li:
-    name: "Batch 3 — Guanacaste + Puntarenas + Limón"
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - run: pip install --upgrade pip && pip install -r requirements.txt
-      - run: python -c "from configs.init_db import init_db; init_db()"
-      - name: Crawl
-        run: |
-          python pipeline.py --mode discover --max-pages 200 --delay 1.0 --ids \
-            GU001 GU002 GU003 GU004 GU005 GU006 GU007 GU008 GU009 GU010 GU011 \
-            PU001 PU002 PU003 PU004 PU005 PU006 PU007 PU008 PU009 PU010 PU011 PU012 PU013 \
-            LI001 LI002 LI003 LI004 LI005 LI006
-
-# ── Manual dispatch: single flexible job ─────────────────────────────────────
-
-  crawl-manual:
-    name: "Manual crawl"
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - run: pip install --upgrade pip && pip install -r requirements.txt
-      - name: Verify imports
-        run: |
-          python -c "
-          from configs.db import get_connection, BACKEND
-          from crawlers.scrapling_crawler import ScraplingCrawler
-          from modules.store import load_known_state, store_results
-          print(f'Backend: {BACKEND}')
-          print('All imports OK')
-          "
-      - run: python -c "from configs.init_db import init_db; init_db()"
-      - name: Run crawl pipeline
+      - id: enq
+        name: Enqueue tasks
         run: |
           MODE="${{ github.event.inputs.mode || 'discover' }}"
-          MAX_PAGES="${{ github.event.inputs.max_pages || '200' }}"
-          IDS="${{ github.event.inputs.ids }}"
-
-          if [ -n "$IDS" ]; then
-            python pipeline.py --mode "$MODE" --max-pages "$MAX_PAGES" --delay 1.0 --ids $IDS
-          else
-            python pipeline.py --mode "$MODE" --max-pages "$MAX_PAGES" --delay 1.0
+          ONLY_MISSING=""
+          if [ "${{ github.event.inputs.only_missing }}" = "true" ]; then
+            ONLY_MISSING="--only-missing"
           fi
+          python crawler_cli.py enqueue --mode "$MODE" $ONLY_MISSING
+
+  work:
+    name: "Worker ${{ matrix.worker }}"
+    needs: enqueue
+    if: needs.enqueue.outputs.run_id != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        worker: [1, 2, 3, 4]
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install --upgrade pip && pip install -r requirements.txt
+      - name: Work the queue
+        run: |
+          MAX_PAGES="${{ github.event.inputs.max_pages || '200' }}"
+          python crawler_cli.py work \
+            --run-id ${{ needs.enqueue.outputs.run_id }} \
+            --worker-id "gha-${{ github.run_id }}-${{ matrix.worker }}" \
+            --time-budget 3000 \
+            --max-pages "$MAX_PAGES" \
+            --delay 1.0
+
+  finalize:
+    name: "Finalize run"
+    needs: [enqueue, work]
+    if: always() && needs.enqueue.outputs.run_id != ''
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install --upgrade pip && pip install -r requirements.txt
+      - name: Reap + finalize
+        run: python crawler_cli.py reap --run-id ${{ needs.enqueue.outputs.run_id }}
