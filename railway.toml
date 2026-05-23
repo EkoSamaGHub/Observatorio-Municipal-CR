@@ -1,3 +1,7 @@
+# ── API service (web) ───────────────────────────────────────────
+# This is the default service deployed by Railway when you connect the repo.
+# Start command: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+
 [build]
 builder = "nixpacks"
 
@@ -6,3 +10,16 @@ startCommand = "uvicorn api.main:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"
+
+# ── Crawler worker service ───────────────────────────────────────
+# Add a SECOND Railway service from the same repo with:
+#   Start command: python -u worker.py
+#   No healthcheck (it's a worker, not a web server)
+#   Restart policy: on_failure
+#
+# Required environment variables (same as the API service):
+#   DATABASE_URL  — Postgres connection string (TigerData / Railway Postgres)
+#
+# The worker automatically:
+#   1. Runs discover (--only-missing) until all 84 municipalities are indexed
+#   2. Switches to monitor mode (re-checks every 6 hours) once at 100%
