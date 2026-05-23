@@ -19,8 +19,13 @@ Task status:  pending → running → done | failed | dead
 from datetime import datetime, timedelta, timezone
 
 from configs.db import BACKEND, get_connection
+from modules import events
 
 TERMINAL = ("done", "dead")
+# A run in one of these states must not hand out tasks; workers polling
+# claim_task() get None and idle/stop. This is how admin pause/stop/cancel
+# halts the distributed workers without any infrastructure access.
+HALTED_STATES = ("paused", "stopped", "cancelled")
 DEFAULT_LEASE_SECONDS = 600  # 10 min — must exceed the slowest single-muni crawl
 
 
@@ -57,6 +62,12 @@ def create_run(municipality_ids: list[str], mode: str, worker_id: str = "",
                 (run_id, mid, mode, max_attempts, now, now),
             )
         conn.commit()
+        events.log_event(
+            "run_started", run_id=int(run_id),
+            message=f"Run {run_id} enqueued: {len(municipality_ids)} municipalities (mode={mode})",
+            meta={"mode": mode, "count": len(municipality_ids), "worker_id": worker_id},
+            conn=conn,
+        )
         return int(run_id)
     finally:
         conn.close()
@@ -76,6 +87,15 @@ def claim_task(run_id: int, worker_id: str, lease_seconds: int = DEFAULT_LEASE_S
 
     conn = get_connection()
     try:
+        # Respect operator control: a paused/stopped/cancelled run yields no
+        # work, so every worker on it winds down on its next poll.
+        run = conn.execute(
+            "SELECT status FROM crawl_runs WHERE id=%s", (run_id,)
+        ).fetchone()
+        if run and run.get("status") in HALTED_STATES:
+            conn.commit()
+            return None
+
         select_sql = (
             "SELECT id FROM crawl_tasks "
             "WHERE run_id = %s "
@@ -151,7 +171,18 @@ def complete_task(task_id: int, pages_found: int = 0, sitemap_total: int = 0,
             "completeness_pct=%s, error=NULL, lease_expires_at=NULL, updated_at=%s WHERE id=%s",
             (pages_found, sitemap_total, completeness_pct, now, task_id),
         )
+        row = conn.execute(
+            "SELECT run_id, municipality_id FROM crawl_tasks WHERE id=%s", (task_id,)
+        ).fetchone()
         conn.commit()
+        if row:
+            events.log_event(
+                "muni_completed", run_id=row["run_id"], task_id=task_id,
+                municipality_id=row["municipality_id"],
+                message=f"{row['municipality_id']}: {pages_found} pages indexed",
+                meta={"pages": pages_found, "completeness_pct": completeness_pct},
+                conn=conn,
+            )
     finally:
         conn.close()
 
@@ -170,7 +201,19 @@ def fail_task(task_id: int, error: str) -> None:
             "UPDATE crawl_tasks SET status=%s, error=%s, lease_expires_at=NULL, updated_at=%s WHERE id=%s",
             (status, (error or "")[:500], now, task_id),
         )
+        row = conn.execute(
+            "SELECT run_id, municipality_id FROM crawl_tasks WHERE id=%s", (task_id,)
+        ).fetchone()
         conn.commit()
+        if row:
+            events.log_event(
+                "muni_dead" if status == "dead" else "muni_failed",
+                level="error" if status == "dead" else "warn",
+                run_id=row["run_id"], task_id=task_id,
+                municipality_id=row["municipality_id"],
+                message=f"{row['municipality_id']} {status}: {error}",
+                conn=conn,
+            )
     finally:
         conn.close()
 
@@ -214,8 +257,10 @@ def reap_all_active() -> list[dict]:
     """Reap every run that is still marked running. Used by the background reaper."""
     conn = get_connection()
     try:
+        # Only reap genuinely-running runs. Paused/stopped/cancelled runs are
+        # held intentionally and must not be requeued or finalized by the reaper.
         rows = conn.execute(
-            "SELECT id FROM crawl_runs WHERE status='running' OR finished_at IS NULL"
+            "SELECT id FROM crawl_runs WHERE status='running'"
         ).fetchall()
     finally:
         conn.close()
@@ -234,6 +279,14 @@ def _finalize_run(run_id: int, prog: dict) -> None:
              prog["sitemap_total"], run_id),
         )
         conn.commit()
+        events.log_event(
+            "run_finished", run_id=run_id,
+            level="error" if prog["dead"] else "info",
+            message=f"Run {run_id} finished: {prog['done']} done, {prog['dead']} dead, {prog['pages']} pages",
+            meta={"done": prog["done"], "dead": prog["dead"], "failed": prog["failed"],
+                  "pages": prog["pages"]},
+            conn=conn,
+        )
     finally:
         conn.close()
 
@@ -262,8 +315,9 @@ def run_progress(run_id: int) -> dict:
 
     by = {r["status"]: r for r in rows}
     counts = {s: int(by.get(s, {}).get("n", 0)) for s in
-              ("pending", "running", "done", "failed", "dead")}
+              ("pending", "running", "done", "failed", "dead", "skipped")}
     total = sum(counts.values())
+    terminal = counts["done"] + counts["dead"] + counts["skipped"]
     return {
         "run_id": run_id,
         "total": total,
@@ -272,10 +326,11 @@ def run_progress(run_id: int) -> dict:
         "done": counts["done"],
         "failed": counts["failed"],
         "dead": counts["dead"],
-        "terminal": counts["done"] + counts["dead"],
+        "skipped": counts["skipped"],
+        "terminal": terminal,
         "pages": int(sum(r["pages"] for r in rows)),
         "sitemap_total": int(sum(r["sitemap"] for r in rows)),
         "last_heartbeat": hb["ts"] if hb else None,
         "current_municipality": current["municipality_id"] if current else None,
-        "pct": round((counts["done"] + counts["dead"]) / total * 100, 1) if total else 0.0,
+        "pct": round(terminal / total * 100, 1) if total else 0.0,
     }
