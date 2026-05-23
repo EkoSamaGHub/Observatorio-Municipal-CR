@@ -38,29 +38,34 @@ def list_municipalities(
     if province:
         registry = [m for m in registry if m["province"].lower() == province.lower()]
 
+    # Aggregate once per table (3 queries total) instead of 3 queries PER
+    # municipality (252 for 84 munis). The N+1 version was slow enough under
+    # crawl load to trip the frontend's SSR fetch timeout, which zeroed every
+    # stat card on the homepage even though the data was present.
+    page_rows = db.execute(
+        "SELECT municipality_id, COUNT(*) AS pages, MAX(last_crawled) AS last_crawled "
+        "FROM pages GROUP BY municipality_id"
+    ).fetchall()
+    doc_rows = db.execute(
+        "SELECT municipality_id, COUNT(*) AS cnt FROM documents GROUP BY municipality_id"
+    ).fetchall()
+    diff_rows = db.execute(
+        "SELECT municipality_id, COUNT(*) AS cnt FROM page_diffs GROUP BY municipality_id"
+    ).fetchall()
+
+    pages_by = {r["municipality_id"]: r for r in page_rows}
+    docs_by = {r["municipality_id"]: r["cnt"] for r in doc_rows}
+    diffs_by = {r["municipality_id"]: r["cnt"] for r in diff_rows}
+
     results = []
     for m in registry:
-        row = db.execute("""
-            SELECT COUNT(*) as pages, MAX(last_crawled) as last_crawled
-            FROM pages WHERE municipality_id = %s
-        """, (m["id"],)).fetchone()
-
-        docs = db.execute(
-            "SELECT COUNT(*) as cnt FROM documents WHERE municipality_id = %s",
-            (m["id"],)
-        ).fetchone()
-
-        changes = db.execute(
-            "SELECT COUNT(*) as cnt FROM page_diffs WHERE municipality_id = %s",
-            (m["id"],)
-        ).fetchone()
-
+        p = pages_by.get(m["id"])
         results.append(MunicipalityStats(
             **m,
-            pages_crawled=row["pages"] or 0,
-            documents_found=docs["cnt"] or 0,
-            last_crawled=row["last_crawled"],
-            changes_detected=changes["cnt"] or 0,
+            pages_crawled=(p["pages"] if p else 0) or 0,
+            documents_found=docs_by.get(m["id"], 0) or 0,
+            last_crawled=p["last_crawled"] if p else None,
+            changes_detected=diffs_by.get(m["id"], 0) or 0,
         ))
 
     return results
