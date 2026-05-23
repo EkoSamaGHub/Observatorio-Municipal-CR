@@ -23,8 +23,14 @@ def run_pipeline(
     request_delay: float = 2.0,
     max_pages: int = 1000,
     mode: str = "discover",
+    only_missing: bool = False,
 ) -> None:
-
+    """
+    mode="discover"  — find new/updated pages on all (or selected) municipalities.
+    mode="monitor"   — re-check known pages for content changes (watchdog).
+    only_missing     — discover mode only: skip municipalities that already have
+                       pages in the DB; focus on the ones not yet indexed.
+    """
     if mode not in ("discover", "monitor"):
         raise ValueError("mode must be 'discover' or 'monitor'")
 
@@ -55,10 +61,29 @@ def run_pipeline(
     if municipality_ids:
         municipalities = [m for m in municipalities if m["id"] in municipality_ids]
 
+    # In monitor mode: only process municipalities that already have pages.
+    # In discover + only_missing: skip municipalities already indexed.
+    if mode == "monitor" or only_missing:
+        conn = get_connection()
+        indexed = {
+            r["municipality_id"]
+            for r in conn.execute(
+                "SELECT DISTINCT municipality_id FROM pages"
+            ).fetchall()
+        }
+        conn.close()
+        if mode == "monitor":
+            municipalities = [m for m in municipalities if m["id"] in indexed]
+            logger.info(f"Monitor mode: {len(municipalities)} municipalities with known pages")
+        elif only_missing:
+            municipalities = [m for m in municipalities if m["id"] not in indexed]
+            logger.info(f"Discover (only-missing): {len(municipalities)} unindexed municipalities")
+
     crawler = ScraplingCrawler(
         request_delay=request_delay,
         max_pages=max_pages,
         respect_robots=True,
+        verify_ssl=False,   # many .go.cr sites have self-signed or mismatched certs
     )
 
     total_pages = 0
@@ -191,7 +216,15 @@ if __name__ == "__main__":
         "--mode",
         choices=["discover", "monitor"],
         default="discover",
-        help="discover: find new pages. monitor: re-check known pages only.",
+        help=(
+            "discover: crawl and index new pages across all municipalities. "
+            "monitor: re-check only already-indexed pages for content changes (watchdog)."
+        ),
+    )
+    parser.add_argument(
+        "--only-missing",
+        action="store_true",
+        help="discover mode only: skip municipalities already in the DB; index the remaining ones first.",
     )
     args = parser.parse_args()
 
@@ -201,4 +234,5 @@ if __name__ == "__main__":
         request_delay=args.delay,
         max_pages=args.max_pages,
         mode=args.mode,
+        only_missing=args.only_missing,
     )

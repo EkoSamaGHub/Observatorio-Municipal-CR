@@ -23,16 +23,17 @@ def init_db() -> None:
 
 
 def _migrate_sqlite(conn) -> None:
+    existing_pages = {r["name"] for r in conn.execute("PRAGMA table_info(pages)").fetchall()}
     for col, typedef in [("title", "TEXT"), ("snippet", "TEXT")]:
-        try:
+        if col not in existing_pages:
             conn.execute(f"ALTER TABLE pages ADD COLUMN {col} {typedef}")
-        except Exception:
-            pass
+            print(f"  migration: pages.{col} added")
+
+    existing_runs = {r["name"] for r in conn.execute("PRAGMA table_info(crawl_runs)").fetchall()}
     for col, typedef in [("sitemap_urls_found", "INTEGER DEFAULT 0"), ("completeness_pct", "REAL DEFAULT 0")]:
-        try:
+        if col not in existing_runs:
             conn.execute(f"ALTER TABLE crawl_runs ADD COLUMN {col} {typedef}")
-        except Exception:
-            pass
+            print(f"  migration: crawl_runs.{col} added")
 
 
 def _migrate_postgres(conn) -> None:

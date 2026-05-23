@@ -22,16 +22,18 @@ CRAWL_MODES = ("discover", "monitor")
 
 class ScraplingCrawler(BaseCrawler):
 
-    def __init__(self, request_delay: float = 2.0, max_pages: int = 1000, respect_robots: bool = True):
+    def __init__(self, request_delay: float = 2.0, max_pages: int = 1000, respect_robots: bool = True, verify_ssl: bool = False):
         self.request_delay = request_delay
         self.max_pages = max_pages
         self.respect_robots = respect_robots
+        self.verify_ssl = verify_ssl
         self._fetcher = Fetcher()
 
     def fetch(self, url: str, municipality_id: str = "", depth: int = 0) -> CrawlResult:
         try:
+            verify = self.verify_ssl
             response = retry(
-                lambda: self._fetcher.get(url),
+                lambda: self._fetcher.get(url, verify=verify),
                 retries=3,
                 delay=2,
             )
@@ -117,9 +119,10 @@ class ScraplingCrawler(BaseCrawler):
             if norm not in visited:
                 queue.append((norm, 1))
 
-        # If root is already known and we have no seed links, force-fetch root
-        # to extract fresh outgoing links and unblock discovery on return visits.
-        if norm_root in visited and not seed_links:
+        # Always re-fetch root on return visits to get fresh outgoing links.
+        # Without this, a fully-indexed site would never discover new pages:
+        # seed_links are stale (all in known_urls), so nothing new enters the queue.
+        if norm_root in visited:
             visited.discard(norm_root)
 
         sitemap_total = len(sitemap_urls)
