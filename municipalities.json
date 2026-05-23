@@ -521,7 +521,7 @@
     "id": "PU010",
     "province": "Puntarenas",
     "name": "Municipalidad de Corredores",
-    "root_url": "https://www.corredores.go.cr",
+    "root_url": "https://www.municorredores.go.cr",
     "active": true
   },
   {
@@ -542,7 +542,7 @@
     "id": "PU013",
     "province": "Puntarenas",
     "name": "Municipalidad de Puerto Jiménez",
-    "root_url": "https://www.munipuertojimenez.go.cr",
+    "root_url": "https://munijimenez.go.cr",
     "active": true
   },
   {
