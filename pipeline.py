@@ -101,88 +101,94 @@ def run_pipeline(
 
         logger.info(f"=== {name} ({muni_id}) ===")
 
-        # ── Load known state ─────────────────────────────────────────────────
-        known_urls, seed_links = load_known_state(muni_id)
-        logger.info(f"[{muni_id}] known={len(known_urls)} seed_links={len(seed_links)}")
+        try:
+            # ── Load known state ─────────────────────────────────────────────
+            known_urls, seed_links = load_known_state(muni_id)
+            logger.info(f"[{muni_id}] known={len(known_urls)} seed_links={len(seed_links)}")
 
-        # ── Fetch sitemap ────────────────────────────────────────────────────
-        sitemap_urls: list[str] = []
-        if mode == "discover":
-            sitemap_urls = fetch_sitemap_urls(root_url)
-            total_sitemap_urls += len(sitemap_urls)
+            # ── Fetch sitemap ────────────────────────────────────────────────
+            sitemap_urls: list[str] = []
+            if mode == "discover":
+                sitemap_urls = fetch_sitemap_urls(root_url)
+                total_sitemap_urls += len(sitemap_urls)
 
-        # ── Step 1: Crawl ────────────────────────────────────────────────────
-        logger.info(f"Step 1: Crawl [{mode}]")
-        summary = crawler.crawl(
-            muni_id,
-            root_url,
-            max_depth=max_depth,
-            mode=mode,
-            known_urls=known_urls,
-            seed_links=seed_links,
-            sitemap_urls=sitemap_urls,
-        )
-
-        raw_results = summary.results
-
-        if not raw_results:
-            logger.info(f"{name}: nothing to crawl")
-            continue
-
-        if summary.terminated_by == "max_pages":
-            logger.warning(
-                f"[{muni_id}] hit max_pages limit ({max_pages}) — "
-                f"site may have more pages. Run again to continue discovery."
+            # ── Step 1: Crawl ────────────────────────────────────────────────
+            logger.info(f"Step 1: Crawl [{mode}]")
+            summary = crawler.crawl(
+                muni_id,
+                root_url,
+                max_depth=max_depth,
+                mode=mode,
+                known_urls=known_urls,
+                seed_links=seed_links,
+                sitemap_urls=sitemap_urls,
             )
 
-        if summary.sitemap_total > 0:
+            raw_results = summary.results
+
+            if not raw_results:
+                logger.info(f"{name}: nothing to crawl")
+                continue
+
+            if summary.terminated_by == "max_pages":
+                logger.warning(
+                    f"[{muni_id}] hit max_pages limit ({max_pages}) — "
+                    f"site may have more pages. Run again to continue discovery."
+                )
+
+            if summary.sitemap_total > 0:
+                logger.info(
+                    f"[{muni_id}] completeness: {summary.pages_fetched}/{summary.sitemap_total} "
+                    f"sitemap URLs = {summary.completeness_pct:.1f}%"
+                )
+
+            # ── Step 2: Extract ──────────────────────────────────────────────
+            logger.info("Step 2: Extract")
+            for result in raw_results:
+                if not result.content_type:
+                    result.content_type = classify_url(result.url)
+
+            # ── Step 3: Normalize ────────────────────────────────────────────
+            logger.info("Step 3: Normalize")
+            results = normalize_results(raw_results)
+
+            # ── Step 4: Hash (done inside CrawlResult) ───────────────────────
+            logger.info("Step 4: Hash — verified")
+
+            # ── Step 5: Diff + Store ─────────────────────────────────────────
+            logger.info("Step 5: Store")
+            changes = detect_changes(results)
+            store_stats = store_results(results)
+
+            errors = sum(1 for r in results if not r.success)
+            new_pages = store_stats["inserted"]
+            changed_pages = len(changes)
+
+            total_pages += len(results)
+            total_new += new_pages
+            total_changed += changed_pages
+            total_errors += errors
+
+            # ── Step 6: Diff report ──────────────────────────────────────────
+            logger.info(f"Step 6: Diff — {changed_pages} changes detected")
+            for change in changes:
+                logger.info(f"  CHANGED: {change['url']}")
+
+            # ── Step 7: Monitor ──────────────────────────────────────────────
             logger.info(
-                f"[{muni_id}] completeness: {summary.pages_fetched}/{summary.sitemap_total} "
-                f"sitemap URLs = {summary.completeness_pct:.1f}%"
+                f"Step 7: Monitor — new={new_pages} changed={changed_pages} "
+                f"terminated_by={summary.terminated_by} errors={errors}"
+            )
+            logger.info(
+                f"{name}: crawled={len(results)} new={new_pages} changed={changed_pages} "
+                f"pdfs={store_stats['docs_inserted']} links={store_stats['links_stored']} "
+                f"sitemap={summary.sitemap_total} completeness={summary.completeness_pct:.1f}% errors={errors}"
             )
 
-        # ── Step 2: Extract ──────────────────────────────────────────────────
-        logger.info("Step 2: Extract")
-        for result in raw_results:
-            if not result.content_type:
-                result.content_type = classify_url(result.url)
-
-        # ── Step 3: Normalize ────────────────────────────────────────────────
-        logger.info("Step 3: Normalize")
-        results = normalize_results(raw_results)
-
-        # ── Step 4: Hash (done inside CrawlResult) ───────────────────────────
-        logger.info("Step 4: Hash — verified")
-
-        # ── Step 5: Diff + Store ─────────────────────────────────────────────
-        logger.info("Step 5: Store")
-        changes = detect_changes(results)
-        store_stats = store_results(results)
-
-        errors = sum(1 for r in results if not r.success)
-        new_pages = store_stats["inserted"]
-        changed_pages = len(changes)
-
-        total_pages += len(results)
-        total_new += new_pages
-        total_changed += changed_pages
-        total_errors += errors
-
-        # ── Step 6: Diff report ──────────────────────────────────────────────
-        logger.info(f"Step 6: Diff — {changed_pages} changes detected")
-        for change in changes:
-            logger.info(f"  CHANGED: {change['url']}")
-
-        # ── Step 7: Monitor ──────────────────────────────────────────────────
-        logger.info(
-            f"Step 7: Monitor — new={new_pages} changed={changed_pages} "
-            f"terminated_by={summary.terminated_by} errors={errors}"
-        )
-        logger.info(
-            f"{name}: crawled={len(results)} new={new_pages} changed={changed_pages} "
-            f"pdfs={store_stats['docs_inserted']} links={store_stats['links_stored']} "
-            f"sitemap={summary.sitemap_total} completeness={summary.completeness_pct:.1f}% errors={errors}"
-        )
+        except Exception as e:
+            # One bad municipality must never abort the whole pass.
+            total_errors += 1
+            logger.error(f"[{muni_id}] crawl failed, skipping: {e}")
 
     # ── Finalize run record ──────────────────────────────────────────────────
     conn = get_connection()

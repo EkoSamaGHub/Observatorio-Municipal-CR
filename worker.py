@@ -29,6 +29,12 @@ def _now():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
+def _now_iso():
+    # ISO format matches pipeline.py's started_at/finished_at so the duration
+    # SQL (finished_at::timestamptz) and last_crawled comparisons stay valid.
+    return datetime.now(timezone.utc).isoformat()
+
+
 # ── Health check HTTP server ──────────────────────────────────────────────────
 
 class _H(BaseHTTPRequestHandler):
@@ -147,6 +153,24 @@ def pipeline_loop():
         _state["status"] = f"init_db error: {_init_result[0]}"
         return
     log.info("[worker] DB ready")
+
+    # ── Reap orphaned runs ────────────────────────────────────────────────────
+    # A fresh container has not started any run yet, so any crawl_runs row with
+    # finished_at IS NULL is a zombie left by a previously killed process
+    # (Railway redeploy / OOM / SIGKILL — atexit never fired). Close them so the
+    # UI stops showing a dead crawl as "running".
+    try:
+        from configs.db import get_connection
+        c = get_connection()
+        c.execute(
+            "UPDATE crawl_runs SET finished_at=%s WHERE finished_at IS NULL",
+            (_now_iso(),),
+        )
+        c.commit()
+        c.close()
+        log.info("[worker] reaped orphaned (unfinished) crawl_runs")
+    except Exception as e:
+        log.error(f"[worker] orphan-run reap failed: {e}")
 
     # Phase 1 — Discover until 84/84
     _state["phase"] = "discover"

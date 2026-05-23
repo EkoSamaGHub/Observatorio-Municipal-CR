@@ -22,18 +22,22 @@ CRAWL_MODES = ("discover", "monitor")
 
 class ScraplingCrawler(BaseCrawler):
 
-    def __init__(self, request_delay: float = 2.0, max_pages: int = 1000, respect_robots: bool = True, verify_ssl: bool = False):
+    def __init__(self, request_delay: float = 2.0, max_pages: int = 1000, respect_robots: bool = True, verify_ssl: bool = False, request_timeout: int = 20):
         self.request_delay = request_delay
         self.max_pages = max_pages
         self.respect_robots = respect_robots
         self.verify_ssl = verify_ssl
+        self.request_timeout = request_timeout
         self._fetcher = Fetcher()
 
     def fetch(self, url: str, municipality_id: str = "", depth: int = 0) -> CrawlResult:
         try:
             verify = self.verify_ssl
+            timeout = self.request_timeout
+            # timeout is mandatory: without it a server that accepts the TCP
+            # connection but never responds hangs the entire sequential crawl.
             response = retry(
-                lambda: self._fetcher.get(url, verify=verify),
+                lambda: self._fetcher.get(url, verify=verify, timeout=timeout),
                 retries=3,
                 delay=2,
             )

@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.deps import get_db
@@ -28,6 +30,27 @@ def list_runs(
     return [CrawlRun(**r) for r in rows]
 
 
+# A run is only "live" if a page was written recently. Without a heartbeat
+# column this is our liveness proxy: if nothing has been crawled in this many
+# minutes the worker is dead (killed mid-run, finished_at never set) and we
+# must not report it as active.
+_STALE_AFTER_MINUTES = 20
+
+
+def _is_stale(ts) -> bool:
+    """True if `ts` (ISO-8601 TEXT) is older than the staleness window or unparseable."""
+    if not ts:
+        return True
+    try:
+        parsed = datetime.fromisoformat(str(ts))
+    except ValueError:
+        return True
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    age = datetime.now(timezone.utc) - parsed
+    return age > timedelta(minutes=_STALE_AFTER_MINUTES)
+
+
 @router.get("/active")
 def get_active_run(db=Depends(get_db)):
     run = db.execute(
@@ -38,6 +61,18 @@ def get_active_run(db=Depends(get_db)):
         return {"active": False}
 
     started_at = run["started_at"]
+
+    # Newest page write for this run; if it's stale (or there is none), the
+    # run is a zombie — report inactive rather than "running" forever.
+    last_activity = db.execute(
+        "SELECT MAX(last_crawled) AS ts FROM pages WHERE last_crawled >= %s",
+        (started_at,),
+    ).fetchone()["ts"]
+
+    # Fall back to started_at so a legitimately just-started run (no pages
+    # written yet) is not prematurely flagged stale.
+    if _is_stale(last_activity or started_at):
+        return {"active": False}
 
     munis_done = db.execute(
         "SELECT COUNT(DISTINCT municipality_id) AS n FROM pages WHERE last_crawled >= %s",
