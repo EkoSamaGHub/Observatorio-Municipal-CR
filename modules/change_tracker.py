@@ -8,8 +8,10 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def detect_changes(results: list[CrawlResult]) -> list[dict]:
-    conn = get_connection()
+def detect_changes(results: list[CrawlResult], conn=None) -> list[dict]:
+    own_conn = conn is None
+    if own_conn:
+        conn = get_connection()
     changes: list[dict] = []
 
     try:
@@ -46,6 +48,7 @@ def detect_changes(results: list[CrawlResult]) -> list[dict]:
             conn.commit()
 
     finally:
-        conn.close()
+        if own_conn:
+            conn.close()
 
     return changes

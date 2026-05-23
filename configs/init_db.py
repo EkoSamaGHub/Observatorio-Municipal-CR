@@ -30,7 +30,14 @@ def _migrate_sqlite(conn) -> None:
             print(f"  migration: pages.{col} added")
 
     existing_runs = {r["name"] for r in conn.execute("PRAGMA table_info(crawl_runs)").fetchall()}
-    for col, typedef in [("sitemap_urls_found", "INTEGER DEFAULT 0"), ("completeness_pct", "REAL DEFAULT 0")]:
+    for col, typedef in [
+        ("sitemap_urls_found", "INTEGER DEFAULT 0"),
+        ("completeness_pct", "REAL DEFAULT 0"),
+        ("status", "TEXT DEFAULT 'running'"),
+        ("worker_id", "TEXT"),
+        ("last_heartbeat", "TEXT"),
+        ("mode", "TEXT DEFAULT 'discover'"),
+    ]:
         if col not in existing_runs:
             conn.execute(f"ALTER TABLE crawl_runs ADD COLUMN {col} {typedef}")
             print(f"  migration: crawl_runs.{col} added")
@@ -41,6 +48,10 @@ def _migrate_postgres(conn) -> None:
     conn.execute("ALTER TABLE pages ADD COLUMN IF NOT EXISTS snippet TEXT")
     conn.execute("ALTER TABLE crawl_runs ADD COLUMN IF NOT EXISTS sitemap_urls_found INTEGER DEFAULT 0")
     conn.execute("ALTER TABLE crawl_runs ADD COLUMN IF NOT EXISTS completeness_pct REAL DEFAULT 0")
+    conn.execute("ALTER TABLE crawl_runs ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'running'")
+    conn.execute("ALTER TABLE crawl_runs ADD COLUMN IF NOT EXISTS worker_id TEXT")
+    conn.execute("ALTER TABLE crawl_runs ADD COLUMN IF NOT EXISTS last_heartbeat TEXT")
+    conn.execute("ALTER TABLE crawl_runs ADD COLUMN IF NOT EXISTS mode TEXT DEFAULT 'discover'")
 
 
 def _init_sqlite(conn) -> None:
@@ -108,6 +119,28 @@ def _init_sqlite(conn) -> None:
     """)
 
     conn.execute("""
+    CREATE TABLE IF NOT EXISTS crawl_tasks (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id            INTEGER NOT NULL,
+        municipality_id   TEXT    NOT NULL,
+        mode              TEXT    NOT NULL DEFAULT 'discover',
+        status            TEXT    NOT NULL DEFAULT 'pending',
+        attempts          INTEGER NOT NULL DEFAULT 0,
+        max_attempts      INTEGER NOT NULL DEFAULT 3,
+        leased_by         TEXT,
+        lease_expires_at  TEXT,
+        heartbeat         TEXT,
+        pages_found       INTEGER DEFAULT 0,
+        sitemap_total     INTEGER DEFAULT 0,
+        completeness_pct  REAL    DEFAULT 0,
+        error             TEXT,
+        created_at        TEXT    NOT NULL,
+        updated_at        TEXT    NOT NULL,
+        UNIQUE(run_id, municipality_id)
+    )
+    """)
+
+    conn.execute("""
     CREATE TABLE IF NOT EXISTS dev_sessions (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         logged_at   TEXT    NOT NULL,
@@ -149,6 +182,7 @@ def _init_sqlite(conn) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_page_links_source ON page_links(source_url)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ssl_municipality ON ssl_reports(municipality_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_domain_municipality ON domain_expiry(municipality_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_crawl_tasks_run_status ON crawl_tasks(run_id, status)")
 
 
 def _init_postgres(conn) -> None:
@@ -216,6 +250,28 @@ def _init_postgres(conn) -> None:
     """)
 
     conn.execute("""
+    CREATE TABLE IF NOT EXISTS crawl_tasks (
+        id                BIGSERIAL PRIMARY KEY,
+        run_id            BIGINT  NOT NULL,
+        municipality_id   TEXT    NOT NULL,
+        mode              TEXT    NOT NULL DEFAULT 'discover',
+        status            TEXT    NOT NULL DEFAULT 'pending',
+        attempts          INTEGER NOT NULL DEFAULT 0,
+        max_attempts      INTEGER NOT NULL DEFAULT 3,
+        leased_by         TEXT,
+        lease_expires_at  TEXT,
+        heartbeat         TEXT,
+        pages_found       INTEGER DEFAULT 0,
+        sitemap_total     INTEGER DEFAULT 0,
+        completeness_pct  REAL    DEFAULT 0,
+        error             TEXT,
+        created_at        TEXT    NOT NULL,
+        updated_at        TEXT    NOT NULL,
+        UNIQUE(run_id, municipality_id)
+    )
+    """)
+
+    conn.execute("""
     CREATE TABLE IF NOT EXISTS dev_sessions (
         id          BIGSERIAL PRIMARY KEY,
         logged_at   TEXT  NOT NULL,
@@ -257,9 +313,10 @@ def _init_postgres(conn) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_page_links_source ON page_links(source_url)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ssl_municipality ON ssl_reports(municipality_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_domain_municipality ON domain_expiry(municipality_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_crawl_tasks_run_status ON crawl_tasks(run_id, status)")
 
     # Resync sequences in case rows were inserted with explicit IDs (e.g. after migration)
-    for table in ["crawl_runs", "pages", "documents", "page_diffs", "page_links", "dev_sessions", "ssl_reports", "domain_expiry"]:
+    for table in ["crawl_runs", "crawl_tasks", "pages", "documents", "page_diffs", "page_links", "dev_sessions", "ssl_reports", "domain_expiry"]:
         conn.execute(
             f"SELECT setval(pg_get_serial_sequence('{table}', 'id'), "
             f"COALESCE(MAX(id), 0) + 1, false) FROM {table}"

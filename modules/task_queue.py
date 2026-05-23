@@ -1,0 +1,281 @@
+"""
+Lease-based crawl task queue.
+
+A run is a batch of per-municipality tasks. Workers atomically *claim* a task
+(taking a time-bounded lease), send heartbeats while working, then mark it
+done/failed. If a worker dies, its lease expires and the task is re-claimable —
+this is what makes the system recoverable across crashes and redeploys.
+
+Concurrency model:
+  - Postgres: SELECT ... FOR UPDATE SKIP LOCKED → many workers claim in
+    parallel without blocking or double-processing. No deadlocks.
+  - SQLite: single-writer dev fallback (no SKIP LOCKED needed).
+
+Task status:  pending → running → done | failed | dead
+  - failed: attempts remain, will be retried
+  - dead:   exhausted max_attempts, abandoned (stops retry storms)
+"""
+
+from datetime import datetime, timedelta, timezone
+
+from configs.db import BACKEND, get_connection
+
+TERMINAL = ("done", "dead")
+DEFAULT_LEASE_SECONDS = 600  # 10 min — must exceed the slowest single-muni crawl
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _iso(dt: datetime) -> str:
+    return dt.isoformat()
+
+
+def _now_iso() -> str:
+    return _iso(_now())
+
+
+# ── Run + task creation ────────────────────────────────────────────────────────
+
+def create_run(municipality_ids: list[str], mode: str, worker_id: str = "",
+               max_attempts: int = 3) -> int:
+    """Create a run and one pending task per municipality. Returns run_id."""
+    now = _now_iso()
+    conn = get_connection()
+    try:
+        run_id = conn.execute(
+            "INSERT INTO crawl_runs (started_at, status, mode, worker_id, last_heartbeat) "
+            "VALUES (%s, 'running', %s, %s, %s) RETURNING id",
+            (now, mode, worker_id, now),
+        ).lastrowid
+        for mid in municipality_ids:
+            conn.execute(
+                "INSERT INTO crawl_tasks "
+                "(run_id, municipality_id, mode, status, max_attempts, created_at, updated_at) "
+                "VALUES (%s, %s, %s, 'pending', %s, %s, %s)",
+                (run_id, mid, mode, max_attempts, now, now),
+            )
+        conn.commit()
+        return int(run_id)
+    finally:
+        conn.close()
+
+
+# ── Claiming ────────────────────────────────────────────────────────────────────
+
+def claim_task(run_id: int, worker_id: str, lease_seconds: int = DEFAULT_LEASE_SECONDS) -> dict | None:
+    """Atomically claim the next workable task for `run_id`, or None if none left.
+
+    Workable = pending, OR running with an expired lease (a dead worker's task),
+    in both cases with attempts still below max_attempts.
+    """
+    now = _now()
+    now_iso = _iso(now)
+    lease_until = _iso(now + timedelta(seconds=lease_seconds))
+
+    conn = get_connection()
+    try:
+        select_sql = (
+            "SELECT id FROM crawl_tasks "
+            "WHERE run_id = %s "
+            "  AND attempts < max_attempts "
+            "  AND (status = 'pending' OR (status IN ('running','failed') AND "
+            "       (lease_expires_at IS NULL OR lease_expires_at < %s))) "
+            "ORDER BY id LIMIT 1"
+        )
+        if BACKEND == "postgres":
+            select_sql += " FOR UPDATE SKIP LOCKED"
+
+        row = conn.execute(select_sql, (run_id, now_iso)).fetchone()
+        if not row:
+            conn.commit()  # release any FOR UPDATE locks / end txn
+            return None
+
+        task_id = row["id"]
+        conn.execute(
+            "UPDATE crawl_tasks "
+            "SET status='running', leased_by=%s, lease_expires_at=%s, heartbeat=%s, "
+            "    attempts = attempts + 1, updated_at=%s "
+            "WHERE id=%s",
+            (worker_id, lease_until, now_iso, now_iso, task_id),
+        )
+        conn.commit()
+
+        return conn.execute(
+            "SELECT * FROM crawl_tasks WHERE id=%s", (task_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+# ── Heartbeat / completion ───────────────────────────────────────────────────────
+
+def heartbeat(task_id: int, worker_id: str, lease_seconds: int = DEFAULT_LEASE_SECONDS,
+              pages_found: int | None = None) -> None:
+    """Extend a task's lease while it is still being worked on."""
+    now = _now()
+    now_iso = _iso(now)
+    lease_until = _iso(now + timedelta(seconds=lease_seconds))
+    conn = get_connection()
+    try:
+        if pages_found is None:
+            conn.execute(
+                "UPDATE crawl_tasks SET lease_expires_at=%s, heartbeat=%s, updated_at=%s "
+                "WHERE id=%s AND leased_by=%s",
+                (lease_until, now_iso, now_iso, task_id, worker_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE crawl_tasks SET lease_expires_at=%s, heartbeat=%s, updated_at=%s, pages_found=%s "
+                "WHERE id=%s AND leased_by=%s",
+                (lease_until, now_iso, now_iso, pages_found, task_id, worker_id),
+            )
+        conn.execute(
+            "UPDATE crawl_runs SET last_heartbeat=%s WHERE id="
+            "(SELECT run_id FROM crawl_tasks WHERE id=%s)",
+            (now_iso, task_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def complete_task(task_id: int, pages_found: int = 0, sitemap_total: int = 0,
+                  completeness_pct: float = 0.0) -> None:
+    now = _now_iso()
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE crawl_tasks SET status='done', pages_found=%s, sitemap_total=%s, "
+            "completeness_pct=%s, error=NULL, lease_expires_at=NULL, updated_at=%s WHERE id=%s",
+            (pages_found, sitemap_total, completeness_pct, now, task_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def fail_task(task_id: int, error: str) -> None:
+    """Record a failure. Becomes 'dead' once attempts are exhausted, otherwise
+    'failed' (re-claimable for retry). attempts was already incremented on claim."""
+    now = _now_iso()
+    conn = get_connection()
+    try:
+        task = conn.execute(
+            "SELECT attempts, max_attempts FROM crawl_tasks WHERE id=%s", (task_id,)
+        ).fetchone()
+        status = "dead" if task and task["attempts"] >= task["max_attempts"] else "failed"
+        conn.execute(
+            "UPDATE crawl_tasks SET status=%s, error=%s, lease_expires_at=NULL, updated_at=%s WHERE id=%s",
+            (status, (error or "")[:500], now, task_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── Reaping / finalization ───────────────────────────────────────────────────────
+
+def reap_run(run_id: int) -> dict:
+    """Requeue tasks whose lease expired (crashed workers) and mark exhausted
+    ones dead. Finalize the run if every task is terminal. Returns progress."""
+    now = _now_iso()
+    conn = get_connection()
+    try:
+        # Exhausted + expired → dead (stops retry storms against broken sites).
+        conn.execute(
+            "UPDATE crawl_tasks SET status='dead', lease_expires_at=NULL, updated_at=%s "
+            "WHERE run_id=%s AND status IN ('running','failed') "
+            "  AND attempts >= max_attempts "
+            "  AND (lease_expires_at IS NULL OR lease_expires_at < %s)",
+            (now, run_id, now),
+        )
+        # Still has attempts + expired → back to pending for retry.
+        conn.execute(
+            "UPDATE crawl_tasks SET status='pending', leased_by=NULL, lease_expires_at=NULL, updated_at=%s "
+            "WHERE run_id=%s AND status IN ('running','failed') "
+            "  AND attempts < max_attempts "
+            "  AND lease_expires_at IS NOT NULL AND lease_expires_at < %s",
+            (now, run_id, now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    prog = run_progress(run_id)
+    if prog["pending"] == 0 and prog["running"] == 0 and prog["total"] > 0:
+        _finalize_run(run_id, prog)
+        prog = run_progress(run_id)
+    return prog
+
+
+def reap_all_active() -> list[dict]:
+    """Reap every run that is still marked running. Used by the background reaper."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT id FROM crawl_runs WHERE status='running' OR finished_at IS NULL"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [reap_run(r["id"]) for r in rows]
+
+
+def _finalize_run(run_id: int, prog: dict) -> None:
+    now = _now_iso()
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE crawl_runs SET finished_at=%s, status='done', "
+            "municipalities=%s, pages_crawled=%s, errors=%s, sitemap_urls_found=%s "
+            "WHERE id=%s AND finished_at IS NULL",
+            (now, prog["total"], prog["pages"], prog["dead"] + prog["failed"],
+             prog["sitemap_total"], run_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# ── Progress ─────────────────────────────────────────────────────────────────────
+
+def run_progress(run_id: int) -> dict:
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT status, COUNT(*) AS n, COALESCE(SUM(pages_found),0) AS pages, "
+            "COALESCE(SUM(sitemap_total),0) AS sitemap FROM crawl_tasks "
+            "WHERE run_id=%s GROUP BY status",
+            (run_id,),
+        ).fetchall()
+        hb = conn.execute(
+            "SELECT MAX(heartbeat) AS ts FROM crawl_tasks WHERE run_id=%s", (run_id,)
+        ).fetchone()
+        current = conn.execute(
+            "SELECT municipality_id FROM crawl_tasks WHERE run_id=%s AND status='running' "
+            "ORDER BY heartbeat DESC LIMIT 1",
+            (run_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    by = {r["status"]: r for r in rows}
+    counts = {s: int(by.get(s, {}).get("n", 0)) for s in
+              ("pending", "running", "done", "failed", "dead")}
+    total = sum(counts.values())
+    return {
+        "run_id": run_id,
+        "total": total,
+        "pending": counts["pending"],
+        "running": counts["running"],
+        "done": counts["done"],
+        "failed": counts["failed"],
+        "dead": counts["dead"],
+        "terminal": counts["done"] + counts["dead"],
+        "pages": int(sum(r["pages"] for r in rows)),
+        "sitemap_total": int(sum(r["sitemap"] for r in rows)),
+        "last_heartbeat": hb["ts"] if hb else None,
+        "current_municipality": current["municipality_id"] if current else None,
+        "pct": round((counts["done"] + counts["dead"]) / total * 100, 1) if total else 0.0,
+    }
