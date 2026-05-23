@@ -6,7 +6,7 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "uvicorn api.main:app --host 0.0.0.0 --port $PORT"
+startCommand = "sh -c 'if [ -n \"$WORKER_MODE\" ]; then python -u worker.py; else uvicorn api.main:app --host 0.0.0.0 --port $PORT; fi'"
 healthcheckPath = "/"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"
