@@ -126,13 +126,23 @@ class _PgConn:
     def __init__(self, url: str):
         import psycopg2
         import psycopg2.extras
-        # Ensure connect_timeout is in the DSN string so libpq honours it
-        # even during SSL negotiation (kwarg alone sometimes isn't enough).
-        if "connect_timeout" not in url:
-            sep = "&" if "?" in url else "?"
-            url = url + sep + "connect_timeout=15"
+        from urllib.parse import urlparse, parse_qs
+        r = urlparse(url)
+        qs = {k: v[0] for k, v in parse_qs(r.query).items()}
+        # Use key=value DSN (libpq sometimes ignores connect_timeout in URI form).
+        # keepalives help detect stalled SSL connections.
+        dsn = (
+            f"host={r.hostname} "
+            f"port={r.port or 5432} "
+            f"dbname={(r.path or '/tsdb').lstrip('/')} "
+            f"user={r.username} "
+            f"password={r.password} "
+            f"sslmode={qs.get('sslmode', 'require')} "
+            f"connect_timeout=15 "
+            f"keepalives=1 keepalives_idle=5 keepalives_interval=2 keepalives_count=3"
+        )
         self._c = psycopg2.connect(
-            url,
+            dsn,
             cursor_factory=psycopg2.extras.RealDictCursor,
         )
 
