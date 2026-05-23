@@ -59,6 +59,8 @@ class CrawlRun(BaseModel):
     pages_changed: int
     pages_new: int
     errors: int
+    last_heartbeat: Optional[str] = None
+    status: Optional[str] = None
 
 
 class SearchResult(BaseModel):

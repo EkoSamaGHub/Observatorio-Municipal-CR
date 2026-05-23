@@ -2,6 +2,10 @@ MAX_DEPTH = 5
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 3
 
+# A crawl_runs row with no heartbeat/activity for this long is considered
+# abandoned — used by the API's startup reaper and /runs/active staleness guard.
+STALE_RUN_MINUTES = 15
+
 USER_AGENT = "CostaRicaMunicipalResearchBot/1.0"
 
 IGNORED_EXTENSIONS = [

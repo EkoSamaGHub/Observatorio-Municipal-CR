@@ -52,6 +52,37 @@ def _is_stale(ts) -> bool:
     return age > timedelta(minutes=_STALE_AFTER_MINUTES)
 
 
+def _active_run_started_at(db) -> str | None:
+    """started_at of a truly-live run, or None.
+
+    Mirrors /active's liveness check so /stats reports the same state and
+    the UI counter stops ticking on stale orphan rows.
+    """
+    run = db.execute(
+        "SELECT * FROM crawl_runs WHERE status='running' OR finished_at IS NULL "
+        "ORDER BY started_at DESC LIMIT 1"
+    ).fetchone()
+    if not run:
+        return None
+
+    started_at = run["started_at"]
+    has_tasks = db.execute(
+        "SELECT COUNT(*) AS n FROM crawl_tasks WHERE run_id=%s", (run["id"],)
+    ).fetchone()["n"] > 0
+
+    if has_tasks:
+        prog = task_queue.run_progress(run["id"])
+        ts = prog["last_heartbeat"] or run.get("last_heartbeat") or started_at
+    else:
+        last_activity = db.execute(
+            "SELECT MAX(last_crawled) AS ts FROM pages WHERE last_crawled >= %s",
+            (started_at,),
+        ).fetchone()["ts"]
+        ts = last_activity or started_at
+
+    return None if _is_stale(ts) else started_at
+
+
 @router.get("/active")
 def get_active_run(db=Depends(get_db)):
     run = db.execute(
@@ -160,17 +191,13 @@ def get_run_stats(db=Depends(get_db)):
         "SELECT COALESCE(SUM(hours), 0) AS total, COUNT(*) AS sessions FROM dev_sessions"
     ).fetchone()
 
-    active = db.execute(
-        "SELECT started_at FROM crawl_runs WHERE finished_at IS NULL ORDER BY started_at DESC LIMIT 1"
-    ).fetchone()
-
     return {
         "total_runs":        runs_row["total_runs"],
         "completed_hours":   round(runs_row["completed_hours"], 2),
         "first_run_at":      runs_row["first_run_at"],
         "total_pages":       pages_row["n"],
         "total_docs":        docs_row["n"],
-        "active_started_at": active["started_at"] if active else None,
+        "active_started_at": _active_run_started_at(db),
         "dev_hours":         round(dev_row["total"], 2),
         "dev_sessions":      dev_row["sessions"],
     }
