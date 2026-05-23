@@ -126,18 +126,14 @@ class _PgConn:
     def __init__(self, url: str):
         import psycopg2
         import psycopg2.extras
-        from urllib.parse import urlparse, parse_qs
-        r = urlparse(url)
-        qs = {k: v[0] for k, v in parse_qs(r.query).items()}
+        # Ensure connect_timeout is in the DSN string so libpq honours it
+        # even during SSL negotiation (kwarg alone sometimes isn't enough).
+        if "connect_timeout" not in url:
+            sep = "&" if "?" in url else "?"
+            url = url + sep + "connect_timeout=15"
         self._c = psycopg2.connect(
-            host=r.hostname,
-            port=r.port,
-            dbname=(r.path or "/tsdb").lstrip("/"),
-            user=r.username,
-            password=r.password,
-            sslmode=qs.get("sslmode", "prefer"),
+            url,
             cursor_factory=psycopg2.extras.RealDictCursor,
-            connect_timeout=20,  # fail fast if Timescale unreachable
         )
 
     def execute(self, sql: str, params=None) -> _PgCursor:

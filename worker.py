@@ -124,13 +124,29 @@ def pipeline_loop():
             _state["status"] = f"tcp_fail: {_e}"
             return
 
-    try:
-        init_db()
-        log.info("[worker] DB ready")
-    except Exception as e:
-        log.error(f"[worker] init_db failed: {e}")
-        _state["status"] = f"init_db error: {e}"
+    # ── init_db with a hard 25-second thread-level deadline ─────────────────
+    # psycopg2's SSL negotiation can hang even with connect_timeout in the DSN;
+    # this daemon thread guarantees we bail out and log a clear error.
+    log.info("[worker] calling init_db() ...")
+    _init_result: list = [None]   # [None] | ["ok"] | Exception
+    def _run_init():
+        try:
+            init_db()
+            _init_result[0] = "ok"
+        except Exception as exc:
+            _init_result[0] = exc
+    _t = threading.Thread(target=_run_init, daemon=True, name="init_db")
+    _t.start()
+    _t.join(timeout=25)
+    if _t.is_alive():
+        log.error("[worker] init_db timed out after 25 s — psycopg2 SSL hung")
+        _state["status"] = "init_db_timeout"
         return
+    if isinstance(_init_result[0], Exception):
+        log.error(f"[worker] init_db failed: {_init_result[0]}")
+        _state["status"] = f"init_db error: {_init_result[0]}"
+        return
+    log.info("[worker] DB ready")
 
     # Phase 1 — Discover until 84/84
     _state["phase"] = "discover"
