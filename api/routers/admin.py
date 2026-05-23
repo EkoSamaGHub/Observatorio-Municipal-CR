@@ -196,7 +196,6 @@ def discord_login():
         "response_type": "code",
         "scope": "identify",
         "state": state,
-        "prompt": "none",
     }
     resp = RedirectResponse(f"{DISCORD_AUTHORIZE_URL}?{urlencode(params)}", status_code=302)
     _set_cookie(resp, OAUTH_STATE_COOKIE, state, max_age=600)
