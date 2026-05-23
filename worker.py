@@ -16,7 +16,7 @@ import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-print("worker.py: STARTED", flush=True)
+print("worker.py: STARTED BUILD=8f7ae6d-DIAG", flush=True)
 
 PORT = int(os.environ.get("PORT", 8080))
 MONITOR_HOURS  = 6
