@@ -4,39 +4,63 @@ on:
   schedule:
     # Every Monday at 05:00 UTC (11pm Costa Rica Sunday night)
     - cron: "0 5 * * 1"
+
   workflow_dispatch:
     inputs:
       full_refresh:
         description: "Re-scan ALL municipalities (overwrite existing results)"
+        required: false
         type: boolean
         default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ssl-check-municipalities
+  cancel-in-progress: false
 
 jobs:
   ssl-scan:
     name: Run SSL Labs scan
     runs-on: ubuntu-latest
-    timeout-minutes: 120    # SSL Labs can be slow; 84 hosts × ~60s each ≈ 84 min max
+
+    # SSL Labs is extremely slow and rate-limited.
+    timeout-minutes: 180
 
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
+      # Future-proof GitHub Actions runtime migration
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+      # Avoid Python buffering so logs stream live
+      PYTHONUNBUFFERED: "1"
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
+          cache: "pip"
 
       - name: Install dependencies
-        run: pip install "psycopg[binary]" requests python-dotenv
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            "psycopg[binary]" \
+            requests \
+            python-dotenv
 
-      - name: Run SSL scan — incremental (cron / manual without full_refresh)
-        if: github.event_name == 'schedule' || inputs.full_refresh == false
-        run: python scripts/check_ssl.py --skip-done
+      - name: Run SSL scan — incremental
+        if: github.event_name == 'schedule' || inputs.full_refresh != true
+        run: |
+          python scripts/check_ssl.py --skip-done
 
-      - name: Run SSL scan — full refresh (manual with full_refresh=true)
-        if: inputs.full_refresh == true
-        run: python scripts/check_ssl.py
+      - name: Run SSL scan — full refresh
+        if: github.event_name == 'workflow_dispatch' && inputs.full_refresh == true
+        run: |
+          python scripts/check_ssl.py
