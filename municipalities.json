@@ -150,7 +150,7 @@
     "id": "AL002",
     "province": "Alajuela",
     "name": "Municipalidad de San Ramón",
-    "root_url": "https://sanramon.go.cr",
+    "root_url": "https://sites.google.com/sanramondigital.net/sanramongocr",
     "active": true
   },
   {
@@ -360,7 +360,7 @@
     "id": "HE008",
     "province": "Heredia",
     "name": "Municipalidad de Flores",
-    "root_url": "https://flores.go.cr",
+    "root_url": "https://flores.go.cr/",
     "active": true
   },
   {
@@ -577,7 +577,7 @@
     "id": "LI005",
     "province": "Limón",
     "name": "Municipalidad de Matina",
-    "root_url": "https://www.munimatina.go.cr",
+    "root_url": "https://www.munimatina.go.cr/",
     "active": true
   },
   {

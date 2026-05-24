@@ -115,7 +115,7 @@ def get_active_run(db=Depends(get_db)):
             "started_at": started_at,
             "municipalities_done": prog["done"],
             "municipalities_with_data": munis_with_data,
-            "municipalities_total": prog["total"] or 84,
+            "municipalities_total": 84,
             "pages_crawled": prog["pages"],
             "current_municipality": prog["current_municipality"],
             "current_url": None,
