@@ -88,6 +88,11 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install --upgrade pip && pip install -r requirements.txt
+      - name: Install headless Chromium (for Cloudflare-protected sites)
+        # Used by modules/stealth_fetch.py via Scrapling's StealthyFetcher to
+        # bypass CF "Just a moment..." managed challenges on the few munis
+        # that gate the plain Fetcher with a 403 JS interstitial.
+        run: python -m playwright install --with-deps chromium
       - name: Work the queue
         run: |
           MAX_PAGES="${{ github.event.inputs.max_pages || '200' }}"

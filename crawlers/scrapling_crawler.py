@@ -12,6 +12,12 @@ from modules.hashing import sha256_hash
 from modules.logger import logger
 from modules.retry_manager import retry
 from modules.robots import is_allowed
+from modules.stealth_fetch import (
+    host_requires_stealth,
+    looks_like_cf_challenge,
+    mark_host_requires_stealth,
+    stealth_fetch,
+)
 from modules.url_manager import normalize_url, should_ignore
 
 
@@ -31,6 +37,11 @@ class ScraplingCrawler(BaseCrawler):
         self._fetcher = Fetcher()
 
     def fetch(self, url: str, municipality_id: str = "", depth: int = 0) -> CrawlResult:
+        # Known-CF host? Skip the doomed plain-HTTP attempt and go straight to
+        # the headless browser. Saves a round trip per page on protected sites.
+        if host_requires_stealth(url):
+            return self._stealth_fetch_as_result(url, municipality_id, depth)
+
         try:
             verify = self.verify_ssl
             timeout = self.request_timeout
@@ -43,6 +54,14 @@ class ScraplingCrawler(BaseCrawler):
             )
 
             html = response.html_content or ""
+
+            # Cloudflare managed challenge — plain Fetcher sees the JS
+            # interstitial, not the real page. Mark the host and retry once
+            # through the stealth path so subsequent URLs skip the plain hop.
+            if looks_like_cf_challenge(response.status, html):
+                mark_host_requires_stealth(url)
+                return self._stealth_fetch_as_result(url, municipality_id, depth)
+
             links, pdfs, emails = self._extract(response, url)
 
             return CrawlResult(
@@ -70,6 +89,38 @@ class ScraplingCrawler(BaseCrawler):
                 depth=depth,
                 error=str(e),
             )
+
+    def _stealth_fetch_as_result(self, url: str, municipality_id: str, depth: int) -> CrawlResult:
+        try:
+            response = stealth_fetch(url, user_agent=USER_AGENT, timeout_seconds=max(self.request_timeout * 3, 60))
+        except Exception as e:
+            logger.error(f"Stealth fetch failed [{municipality_id}] {url}: {e}")
+            return CrawlResult(
+                url=url, municipality_id=municipality_id, status_code=None,
+                content_type="", content_hash="", html="", depth=depth, error=f"stealth: {e}",
+            )
+
+        if response is None:
+            return CrawlResult(
+                url=url, municipality_id=municipality_id, status_code=None,
+                content_type="", content_hash="", html="", depth=depth,
+                error="stealth unavailable (Chromium not installed)",
+            )
+
+        html = response.html_content or ""
+        links, pdfs, emails = self._extract(response, url)
+        return CrawlResult(
+            url=url,
+            municipality_id=municipality_id,
+            status_code=response.status,
+            content_type=response.headers.get("content-type", "text/html"),
+            content_hash=sha256_hash(html),
+            html=html,
+            links=links,
+            pdfs=pdfs,
+            emails=emails,
+            depth=depth,
+        )
 
     def crawl(
         self,
