@@ -2,9 +2,13 @@
 // backend's Discord OAuth callback; we just send credentials on every request.
 // The admin route is never linked from the public nav.
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// All admin requests go through the Vercel rewrite at /api/admin/* (see
+// next.config.ts). This makes the session cookie set by the OAuth callback
+// first-party to the Vercel origin, so browsers send it back on subsequent
+// XHR — cross-site cookie blocking would otherwise drop it silently.
+const API_BASE = "/api/admin";
 
-export const discordLoginUrl = (): string => `${API_BASE}/admin/auth/discord/login`;
+export const discordLoginUrl = (): string => `${API_BASE}/auth/discord/login`;
 
 export interface AuthMe {
   authenticated: boolean;
@@ -124,7 +128,10 @@ export class AdminError extends Error {
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
+  // path values come in like "/admin/overview" — strip the leading "/admin"
+  // since API_BASE already maps to it via the Vercel rewrite.
+  const subpath = path.startsWith("/admin") ? path.slice("/admin".length) : path;
+  const res = await fetch(`${API_BASE}${subpath}`, {
     ...init,
     cache: "no-store",
     credentials: "include",
