@@ -62,13 +62,14 @@ export default function CrawlProgress() {
     );
   }
 
-  const total = data.municipalities_total ?? 84;
-  const done = data.municipalities_done ?? 0;
-  const withData = data.municipalities_with_data ?? 0;
+  const TOTAL_MUNICIPALITIES = 84;
+  const total = TOTAL_MUNICIPALITIES;
+  const done = Math.min(data.municipalities_done ?? 0, total);
+  const withData = Math.min(data.municipalities_with_data ?? 0, total);
   const pages = data.pages_crawled ?? 0;
 
-  const historicalPct = Math.round((withData / total) * 100);
-  const sessionPct = Math.round((done / total) * 100);
+  const historicalPct = Math.min(100, Math.round((withData / total) * 100));
+  const sessionPct = Math.min(100, Math.round((done / total) * 100));
 
   const hrs = Math.floor(elapsed / 3600);
   const mins = Math.floor((elapsed % 3600) / 60);
