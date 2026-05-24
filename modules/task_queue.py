@@ -27,6 +27,12 @@ TERMINAL = ("done", "dead")
 # halts the distributed workers without any infrastructure access.
 HALTED_STATES = ("paused", "stopped", "cancelled")
 DEFAULT_LEASE_SECONDS = 600  # 10 min — must exceed the slowest single-muni crawl
+# A run with no heartbeat for this long is treated as abandoned: any tasks
+# still 'pending' on it are marked dead so the run can finalize instead of
+# staying "running" forever. Set well above the lease window so that a worker
+# briefly pausing between claims (CF stealth fetches can take >60 s) never
+# triggers premature abandonment.
+STALE_RUN_MINUTES = 30
 
 
 def _now() -> datetime:
@@ -222,8 +228,16 @@ def fail_task(task_id: int, error: str) -> None:
 
 def reap_run(run_id: int) -> dict:
     """Requeue tasks whose lease expired (crashed workers) and mark exhausted
-    ones dead. Finalize the run if every task is terminal. Returns progress."""
-    now = _now_iso()
+    ones dead. Finalize the run if every task is terminal. Returns progress.
+
+    If the run has had no heartbeat for STALE_RUN_MINUTES, any tasks still
+    'pending' are also marked dead — they were never claimed by any worker
+    (e.g. GHA workers timed out before reaching the tail of the queue), and
+    without this the run stays "running" indefinitely and the next nightly
+    enqueue creates a parallel run that orphans these forever.
+    """
+    now_dt = _now()
+    now = _iso(now_dt)
     conn = get_connection()
     try:
         # Exhausted + expired → dead (stops retry storms against broken sites).
@@ -243,6 +257,25 @@ def reap_run(run_id: int) -> dict:
             (now, run_id, now),
         )
         conn.commit()
+
+        # Stale-pending sweep: if no worker has heartbeat'd in a while, mark
+        # unclaimed pending tasks dead so _finalize_run can close the run.
+        # The next discover/only-missing enqueue will create fresh tasks for
+        # any munis these covered (only_missing checks pages table, not tasks).
+        run_row = conn.execute(
+            "SELECT started_at, last_heartbeat FROM crawl_runs WHERE id=%s",
+            (run_id,),
+        ).fetchone()
+        if run_row:
+            ref = run_row.get("last_heartbeat") or run_row.get("started_at")
+            if ref and _is_older_than(ref, now_dt, STALE_RUN_MINUTES):
+                conn.execute(
+                    "UPDATE crawl_tasks SET status='dead', error=%s, "
+                    "lease_expires_at=NULL, updated_at=%s "
+                    "WHERE run_id=%s AND status='pending'",
+                    ("unclaimed: run abandoned (no heartbeat)", now, run_id),
+                )
+                conn.commit()
     finally:
         conn.close()
 
@@ -251,6 +284,24 @@ def reap_run(run_id: int) -> dict:
         _finalize_run(run_id, prog)
         prog = run_progress(run_id)
     return prog
+
+
+def _is_older_than(ts, now_dt: datetime, minutes: int) -> bool:
+    """True if `ts` (ISO-8601 string or datetime) predates now_dt by more than
+    `minutes`. Unparseable values are treated as old to avoid pinning a run
+    open on bad data."""
+    if ts is None:
+        return True
+    if isinstance(ts, datetime):
+        parsed = ts
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(ts))
+        except ValueError:
+            return True
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (now_dt - parsed) > timedelta(minutes=minutes)
 
 
 def reap_all_active() -> list[dict]:
