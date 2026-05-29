@@ -2,6 +2,14 @@ from configs.db import get_connection, BACKEND
 
 _DB_PATH_MSG = "TigerData cloud (Postgres)" if BACKEND == "postgres" else "local SQLite"
 
+# Stable 64-bit key for the init-db Postgres advisory lock. Hex spells "MUNI84CR"
+# in a derived form; what matters is that every worker in the system uses the
+# same constant so they serialize. Without serialization, concurrent
+# CREATE TABLE IF NOT EXISTS / ALTER TABLE IF NOT EXISTS take system-catalog
+# locks that deadlock under N>=3 concurrent workers, killing the work step at
+# startup with psycopg.errors.DeadlockDetected.
+_INIT_LOCK_KEY = 0x4D554E49_38344352  # bigint, fits in Postgres advisory-lock arg
+
 
 def _exec(conn, sql: str) -> None:
     conn.execute(sql)
@@ -9,16 +17,20 @@ def _exec(conn, sql: str) -> None:
 
 def init_db() -> None:
     conn = get_connection()
-
-    if BACKEND == "postgres":
-        _init_postgres(conn)
-        _migrate_postgres(conn)
-    else:
-        _init_sqlite(conn)
-        _migrate_sqlite(conn)
-
-    conn.commit()
-    conn.close()
+    try:
+        if BACKEND == "postgres":
+            conn.execute("SELECT pg_advisory_lock(%s)", (_INIT_LOCK_KEY,))
+            try:
+                _init_postgres(conn)
+                _migrate_postgres(conn)
+            finally:
+                conn.execute("SELECT pg_advisory_unlock(%s)", (_INIT_LOCK_KEY,))
+        else:
+            _init_sqlite(conn)
+            _migrate_sqlite(conn)
+        conn.commit()
+    finally:
+        conn.close()
     print(f"Database initialized — backend: {_DB_PATH_MSG}")
 
 

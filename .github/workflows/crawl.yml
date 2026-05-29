@@ -2,8 +2,12 @@ name: Nightly Crawl
 
 on:
   schedule:
-    # 02:00 UTC daily (10pm Costa Rica time, CR is UTC-6)
+    # 02:00 UTC = 20:00 CR — full discover pass on every active muni.
     - cron: "0 2 * * *"
+    # 14:00 UTC = 08:00 CR — only-missing sweep so munis the nightly run
+    # didn't reach (worker time-budget cuts off ~mid-queue) get picked up
+    # within 12 h instead of waiting for the next full pass.
+    - cron: "0 14 * * *"
   workflow_dispatch:
     inputs:
       mode:
@@ -61,7 +65,10 @@ jobs:
         run: |
           MODE="${{ github.event.inputs.mode || 'discover' }}"
           ONLY_MISSING=""
-          if [ "${{ github.event.inputs.only_missing }}" = "true" ]; then
+          # Manual dispatch flag wins; otherwise the 14:00 cron is the
+          # only-missing sweep, the 02:00 cron is the full pass.
+          if [ "${{ github.event.inputs.only_missing }}" = "true" ] \
+             || [ "${{ github.event.schedule }}" = "0 14 * * *" ]; then
             ONLY_MISSING="--only-missing"
           fi
           python crawler_cli.py enqueue --mode "$MODE" $ONLY_MISSING
@@ -74,11 +81,14 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      # 2 workers keeps peak concurrent DB connections well under Timescale's
-      # limit (workers + Railway API + reaper share one pool). Raising this risks
-      # exhausting connections and hanging the API/SSR.
+      # 4 workers — each holds one Postgres connection at a time, so the pool
+      # cost is 4 + Railway API + reaper, still comfortably under Timescale's
+      # connection ceiling. The previous 2-worker cap couldn't drain 84 tasks
+      # within a single 60-min GHA timeout, leaving the tail of the queue
+      # ('LI*', late 'PU*') permanently unclaimed. If Timescale starts
+      # rejecting connections during a run, drop back to 3 here.
       matrix:
-        worker: [1, 2]
+        worker: [1, 2, 3, 4]
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
     steps:
@@ -88,13 +98,18 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install --upgrade pip && pip install -r requirements.txt
+      - name: Install headless Chromium (for Cloudflare-protected sites)
+        # Used by modules/stealth_fetch.py via Scrapling's StealthyFetcher to
+        # bypass CF "Just a moment..." managed challenges on the few munis
+        # that gate the plain Fetcher with a 403 JS interstitial.
+        run: python -m playwright install --with-deps chromium
       - name: Work the queue
         run: |
           MAX_PAGES="${{ github.event.inputs.max_pages || '200' }}"
           python crawler_cli.py work \
             --run-id ${{ needs.enqueue.outputs.run_id }} \
             --worker-id "gha-${{ github.run_id }}-${{ matrix.worker }}" \
-            --time-budget 3000 \
+            --time-budget 5000 \
             --max-pages "$MAX_PAGES" \
             --delay 1.0
 
