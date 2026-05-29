@@ -19,7 +19,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from configs.db import BACKEND, get_connection
-from modules import events, task_queue
+from modules import events, platform_runner, task_queue
+from modules.platform_client import CrawlerPlatformClient, PLATFORM_API_URL
 
 MUNICIPALITIES_FILE = Path("municipalities.json")
 
@@ -201,6 +202,67 @@ def workers() -> list[dict]:
     return out
 
 
+# ── platform integration ──────────────────────────────────────────────────────
+
+def platform_jobs(limit: int = 20) -> list[dict]:
+    """Recent crawler-platform jobs, newest first. Returns [] if unreachable."""
+    try:
+        with CrawlerPlatformClient() as c:
+            r = c._session.get(
+                f"{c._base}/v1/crawls",
+                params={"limit": limit},
+                timeout=5,
+            )
+            r.raise_for_status()
+            return r.json().get("items", [])
+    except Exception:
+        return []
+
+
+def platform_active_jobs() -> list[dict]:
+    return [j for j in platform_jobs(limit=10)
+            if j.get("status") in ("RUNNING", "QUEUED", "DRAINING")]
+
+
+def cancel_platform_job(job_id: str) -> dict:
+    try:
+        with CrawlerPlatformClient() as c:
+            c.cancel_job(job_id)
+        return {"ok": True, "job_id": job_id}
+    except Exception as e:
+        return {"ok": False, "reason": str(e)}
+
+
+def platform_job_detail(job_id: str) -> dict:
+    """Full job detail — stats + per-task status breakdown — for the admin
+    drill-down. Returns {"ok": False, ...} if the platform is unreachable."""
+    try:
+        with CrawlerPlatformClient() as c:
+            job = c.get_job(job_id)
+        return {"ok": True, **job}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
+def platform_job_errors(job_id: str, limit: int = 50) -> dict:
+    """Recorded crawl errors for a job (stage / code / message / timestamp).
+
+    This is the 'why did it fail' view the admin dashboard needs. A job can be
+    COMPLETED yet still have terminal task errors (e.g. SSRF / TOO_LARGE), so
+    this is surfaced independently of job status."""
+    try:
+        with CrawlerPlatformClient() as c:
+            errors = c.list_errors(job_id, limit=limit)
+        # Group by code for a quick at-a-glance summary
+        by_code: dict[str, int] = {}
+        for e in errors:
+            code = e.get("code") or "UNKNOWN"
+            by_code[code] = by_code.get(code, 0) + 1
+        return {"ok": True, "count": len(errors), "by_code": by_code, "errors": errors}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200], "errors": []}
+
+
 # ── dashboard overview ────────────────────────────────────────────────────────
 
 def overview() -> dict:
@@ -228,7 +290,10 @@ def overview() -> dict:
     for r in enriched:
         by_state[r["state"]] = by_state.get(r["state"], 0) + 1
 
-    active = next((r for r in enriched if r["state"] in ("active", "stale")), None)
+    # Prefer a live crawler-platform job; fall back to a live legacy run.
+    active = active_running_run() or next(
+        (r for r in enriched if r["state"] in ("active", "stale")), None
+    )
     last_success = next(
         (r for r in enriched if r["state"] == "done" and r["progress"]["dead"] == 0
          and r["progress"]["done"] > 0),
@@ -241,6 +306,21 @@ def overview() -> dict:
 
     live_workers = workers()
 
+    # Platform status (non-blocking — failure just shows ok=False)
+    try:
+        pjobs = platform_jobs(limit=20)
+        p_active = [j for j in pjobs if j.get("status") in ("RUNNING", "QUEUED", "DRAINING")]
+        p_recent = [j for j in pjobs if j.get("status") in ("COMPLETED", "FAILED", "CANCELED")][:5]
+        platform_info: dict = {
+            "ok": True,
+            "url": PLATFORM_API_URL,
+            "active_count": len(p_active),
+            "active_jobs": p_active,
+            "recent_jobs": p_recent,
+        }
+    except Exception as e:
+        platform_info = {"ok": False, "url": PLATFORM_API_URL, "error": str(e)[:200]}
+
     return {
         "generated_at": _now_iso(),
         "system": {
@@ -248,6 +328,7 @@ def overview() -> dict:
             "backend": BACKEND,
             "stale_minutes": STALE_MINUTES,
             "dispatch_configured": bool(os.environ.get("GH_DISPATCH_TOKEN") and os.environ.get("GH_REPO")),
+            "platform_url": PLATFORM_API_URL,
             "environment": _env_metadata(),
         },
         "coverage": {
@@ -266,6 +347,7 @@ def overview() -> dict:
             "alive": sum(1 for w in live_workers if w["alive"]),
             "list": live_workers,
         },
+        "platform": platform_info,
     }
 
 
@@ -313,7 +395,56 @@ def run_tasks(run_id: int) -> list[dict]:
 # ── control: start / dispatch ─────────────────────────────────────────────────
 
 def active_running_run() -> dict | None:
-    """The single live run, if any (running + fresh heartbeat)."""
+    """The single live run, if any.
+
+    Checks the crawler-platform first (new crawls), then falls back to the
+    legacy crawl_runs table (historical / in-flight legacy runs).
+    """
+    p_active = platform_active_jobs()
+    if p_active:
+        j = p_active[0]
+        # The list endpoint omits discovered/extracted; fetch the detail of the
+        # single active job so the progress bar reflects real numbers.
+        try:
+            with CrawlerPlatformClient() as c:
+                j = c.get_job(j["id"]) or j
+        except Exception:
+            pass
+        stats = j.get("stats", {})
+        discovered = stats.get("pagesDiscovered", 0) or 1
+        extracted = stats.get("pagesExtracted", 0)
+        pct = round(extracted / discovered * 100, 1) if discovered else 0.0
+        return {
+            "source": "platform",
+            "id": j.get("id"),
+            "status": j.get("status", "").lower(),
+            "state": "active",
+            "mode": "monitor" if "monitor" in (j.get("name") or "").lower() else "discover",
+            "started_at": j.get("startedAt"),
+            "finished_at": j.get("completedAt"),
+            "last_heartbeat": j.get("updatedAt"),
+            "heartbeat_age_min": None,
+            "duration_seconds": None,
+            "pages_per_min": None,
+            "progress": {
+                "run_id": j.get("id"),
+                "total": discovered,
+                "pending": stats.get("pagesDiscovered", 0) - extracted,
+                "running": 0,
+                "done": extracted,
+                "failed": stats.get("errors", 0),
+                "dead": 0,
+                "skipped": 0,
+                "terminal": extracted,
+                "pages": extracted,
+                "sitemap_total": 0,
+                "last_heartbeat": None,
+                "current_municipality": None,
+                "pct": pct,
+            },
+        }
+
+    # Fall back to legacy crawl_runs
     conn = get_connection()
     try:
         rows = conn.execute(
@@ -331,10 +462,11 @@ def active_running_run() -> dict | None:
 def start_crawl(mode: str = "discover", only_missing: bool = False,
                 ids: list[str] | None = None, force: bool = False,
                 dispatch: bool = True) -> dict:
-    """Enqueue a run (and optionally dispatch GitHub Actions workers).
+    """Submit crawl jobs to the crawler-platform.
 
-    Refuses if a live run already exists unless force=True — this is the
-    duplicate-concurrent-crawl guard.
+    Refuses if a live platform run already exists unless force=True.
+    The `dispatch` parameter is ignored — the platform's own workers handle
+    execution without needing GitHub Actions.
     """
     if mode not in ("discover", "monitor"):
         raise ValueError("mode must be 'discover' or 'monitor'")
@@ -351,17 +483,25 @@ def start_crawl(mode: str = "discover", only_missing: bool = False,
     if not selected:
         return {"ok": False, "reason": "no municipalities match the selection"}
 
-    run_id = task_queue.create_run(selected, mode, worker_id="admin")
-    dispatch_result = None
-    if dispatch:
-        dispatch_result = dispatch_github_workflow(mode, only_missing)
+    reg = _registry_map()
+    with CrawlerPlatformClient() as c:
+        if not c.ping():
+            return {"ok": False, "reason": f"Platform API unreachable at {PLATFORM_API_URL}"}
+        # Jobs are named with the muni_id encoded, so the Railway worker's
+        # reconcile loop syncs the results and proactively re-runs any that come
+        # back empty/failed — the operator does not have to wait or watch.
+        job_map = platform_runner.submit_jobs(client=c, muni_ids=selected,
+                                              munis_lookup=reg, mode=mode)
+
+    if not job_map:
+        return {"ok": False, "reason": "no jobs were submitted to the platform"}
+
     events.log_event(
-        "admin_start", run_id=run_id, level="info",
-        message=f"Operator started run {run_id} ({mode}, {len(selected)} munis)",
-        meta={"dispatch": dispatch_result},
+        "admin_start_platform", level="info",
+        message=f"Operator started platform crawl ({mode}, {len(job_map)} munis)",
+        meta={"mode": mode, "job_count": len(job_map)},
     )
-    return {"ok": True, "run_id": run_id, "count": len(selected),
-            "dispatch": dispatch_result}
+    return {"ok": True, "job_map": job_map, "count": len(job_map), "source": "platform"}
 
 
 def dispatch_github_workflow(mode: str, only_missing: bool) -> dict:
@@ -654,13 +794,24 @@ def skip_municipality(run_id: int, municipality_id: str) -> dict:
 
 def recrawl_municipality(municipality_id: str, mode: str = "discover",
                          dispatch: bool = True) -> dict:
-    """Enqueue a one-municipality run so workers re-crawl just this site."""
-    if municipality_id not in _registry_map():
+    """Submit a single-municipality crawl job to the platform."""
+    reg = _registry_map()
+    if municipality_id not in reg:
         return {"ok": False, "reason": f"unknown municipality '{municipality_id}'"}
-    run_id = task_queue.create_run([municipality_id], mode, worker_id="admin-recrawl")
-    dispatch_result = dispatch_github_workflow(mode, False) if dispatch else None
-    events.log_event("admin_recrawl", run_id=run_id, municipality_id=municipality_id,
-                     message=f"Re-crawl {municipality_id} (run {run_id})",
-                     meta={"dispatch": dispatch_result})
-    return {"ok": True, "run_id": run_id, "municipality_id": municipality_id,
-            "dispatch": dispatch_result}
+
+    with CrawlerPlatformClient() as c:
+        if not c.ping():
+            return {"ok": False, "reason": f"Platform API unreachable at {PLATFORM_API_URL}"}
+        job_map = platform_runner.submit_jobs(client=c, muni_ids=[municipality_id],
+                                              munis_lookup=reg, mode=mode)
+
+    job_id = job_map.get(municipality_id)
+    if not job_id:
+        return {"ok": False, "reason": "nothing to crawl (no seeds for monitor mode?)"}
+
+    events.log_event(
+        "admin_recrawl", municipality_id=municipality_id,
+        message=f"Re-crawl {municipality_id} via platform (job {job_id})",
+        meta={"job_id": job_id, "mode": mode},
+    )
+    return {"ok": True, "job_id": job_id, "municipality_id": municipality_id}

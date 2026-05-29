@@ -133,7 +133,10 @@ export default function RunsPanel({ runs, toast, refresh }: {
   return (
     <Card>
       <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-        <h2 className="text-sm font-bold text-slate-800">Runs</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-sm font-bold text-slate-800">Legacy runs</h2>
+          <span className="text-[10px] bg-slate-100 text-slate-500 rounded px-1.5 py-0.5 font-semibold">historic</span>
+        </div>
         <span className="text-xs text-slate-400">{runs.length} recent</span>
       </div>
       <div className="divide-y divide-slate-100">

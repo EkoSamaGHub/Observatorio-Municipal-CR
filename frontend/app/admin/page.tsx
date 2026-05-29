@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Activity, AlertTriangle, Database, Lock, LogOut, Pause, Play,
-  RefreshCw, Server, ShieldCheck, Skull, Unlock,
+  RefreshCw, Server, ShieldCheck, Skull,
 } from "lucide-react";
 import {
   adminApi, AdminError, discordLoginUrl,
@@ -14,6 +14,7 @@ import {
 } from "@/components/admin/ui";
 import RunsPanel from "@/components/admin/RunsPanel";
 import LogsPanel from "@/components/admin/LogsPanel";
+import PlatformJobsPanel from "@/components/admin/PlatformJobsPanel";
 
 const REFRESH_MS = 5000;
 
@@ -174,20 +175,33 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
       </div>
 
       {/* stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Stat label="Indexed" value={`${cov.municipalities_indexed}/${cov.municipalities_total}`}
-          sub={`${cov.coverage_pct}% coverage`} tone="blue" />
-        <Stat label="Pages" value={cov.total_pages.toLocaleString("es-CR")}
-          sub={`${cov.total_documents.toLocaleString("es-CR")} documents`} />
-        <Stat label="Workers" value={`${overview.workers.alive}/${overview.workers.count}`}
-          sub="alive / leasing" tone={overview.workers.alive > 0 ? "emerald" : "slate"} />
-        <Stat label="Active run" value={active ? `#${active.id}` : "none"}
-          sub={active ? active.state : "idle"} tone={active ? "emerald" : "slate"} />
-      </div>
+      {(() => {
+        const platformActive = overview.platform?.active_count ?? 0;
+        const activeLabel = platformActive > 0
+          ? `${platformActive} job${platformActive > 1 ? "s" : ""}`
+          : active ? `#${active.id}` : "none";
+        const activeSub = platformActive > 0 ? "platform crawling"
+          : active ? active.state : "idle";
+        const activeTone = platformActive > 0 || active ? "emerald" : "slate";
+        return (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Stat label="Indexed" value={`${cov.municipalities_indexed}/${cov.municipalities_total}`}
+              sub={`${cov.coverage_pct}% coverage`} tone="blue" />
+            <Stat label="Pages" value={cov.total_pages.toLocaleString("es-CR")}
+              sub={`${cov.total_documents.toLocaleString("es-CR")} documents`} />
+            <Stat label="Workers" value={`${overview.workers.alive}/${overview.workers.count}`}
+              sub="alive / leasing" tone={overview.workers.alive > 0 ? "emerald" : "slate"} />
+            <Stat label="Active crawl" value={activeLabel}
+              sub={activeSub} tone={activeTone} />
+          </div>
+        );
+      })()}
 
       <ActiveRunPanel active={active} toast={notify} refresh={refresh} />
 
       <ControlPanel overview={overview} toast={notify} refresh={refresh} />
+
+      <PlatformJobsPanel platform={overview.platform} toast={notify} refresh={refresh} />
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <RunsPanel runs={runs} toast={notify} refresh={refresh} />
@@ -217,15 +231,24 @@ function ActiveRunPanel({ active, toast, refresh }: {
   }
   const p = active.progress;
   const wrap = (fn: () => Promise<unknown>) => async () => { await fn(); refresh(); };
+  const isPlatform = (active as { source?: string }).source === "platform";
   const isPaused = active.state === "paused";
+
   return (
     <Card className="p-5 space-y-3 border-blue-200">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Activity className="w-4 h-4 text-blue-600" />
-          <span className="font-bold text-slate-800">Run #{active.id}</span>
+          <span className="font-bold text-slate-800">
+            {isPlatform ? `Platform job ${String(active.id).slice(0, 16)}…` : `Run #${active.id}`}
+          </span>
           <RunStateBadge state={active.state} />
           <span className="text-xs text-slate-400">{active.mode}</span>
+          {isPlatform && (
+            <span className="text-[10px] bg-violet-100 text-violet-700 rounded px-1.5 py-0.5 font-semibold">
+              platform
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-3 text-xs text-slate-500">
           <span>{fmtDuration(active.duration_seconds)} elapsed</span>
@@ -238,28 +261,42 @@ function ActiveRunPanel({ active, toast, refresh }: {
 
       <div>
         <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
-          <span>{p.terminal}/{p.total} municipalities · {p.pct}%</span>
-          <span>{p.pages.toLocaleString("es-CR")} pages this run</span>
+          <span>{p.terminal}/{p.total} · {p.pct}%</span>
+          <span>{p.pages.toLocaleString("es-CR")} pages extracted</span>
         </div>
         <ProgressBar pct={p.pct} tone={active.state === "active" ? "emerald" : "blue"} />
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500 mt-2">
-          <span>pending {p.pending}</span><span>running {p.running}</span>
-          <span>done {p.done}</span><span className="text-amber-600">failed {p.failed}</span>
-          <span className="text-rose-600">dead {p.dead}</span><span>skipped {p.skipped}</span>
-          {p.current_municipality && <span className="font-semibold text-slate-700">now: {p.current_municipality}</span>}
-        </div>
+        {!isPlatform && (
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500 mt-2">
+            <span>pending {p.pending}</span><span>running {p.running}</span>
+            <span>done {p.done}</span><span className="text-amber-600">failed {p.failed}</span>
+            <span className="text-rose-600">dead {p.dead}</span><span>skipped {p.skipped}</span>
+            {p.current_municipality && <span className="font-semibold text-slate-700">now: {p.current_municipality}</span>}
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100">
-        {isPaused
-          ? <ActionButton label="Resume" onAction={wrap(() => adminApi.resume(active.id))} onResult={toast} />
-          : <ActionButton label="Pause" onAction={wrap(() => adminApi.pause(active.id))} onResult={toast} />}
-        <ActionButton label="Stop" onAction={wrap(() => adminApi.stop(active.id))} onResult={toast} confirm />
-        <ActionButton label="Reap stale" onAction={wrap(() => adminApi.reap(active.id))} onResult={toast} />
-        <ActionButton label="Clear locks" onAction={wrap(() => adminApi.clearLocks(active.id))} onResult={toast} />
-        <ActionButton label="Retry failed" onAction={wrap(() => adminApi.retryFailed(active.id))} onResult={toast} />
-        <ActionButton label="Force reset" onAction={wrap(() => adminApi.reset(active.id))} onResult={toast} confirm danger />
-        <ActionButton label="Cancel run" onAction={wrap(() => adminApi.cancel(active.id))} onResult={toast} confirm danger />
+        {isPlatform ? (
+          <ActionButton
+            label="Cancel job"
+            onAction={wrap(() => adminApi.cancelPlatformJob(String(active.id)))}
+            onResult={toast}
+            confirm
+            danger
+          />
+        ) : (
+          <>
+            {isPaused
+              ? <ActionButton label="Resume" onAction={wrap(() => adminApi.resume(active.id as number))} onResult={toast} />
+              : <ActionButton label="Pause" onAction={wrap(() => adminApi.pause(active.id as number))} onResult={toast} />}
+            <ActionButton label="Stop" onAction={wrap(() => adminApi.stop(active.id as number))} onResult={toast} confirm />
+            <ActionButton label="Reap stale" onAction={wrap(() => adminApi.reap(active.id as number))} onResult={toast} />
+            <ActionButton label="Clear locks" onAction={wrap(() => adminApi.clearLocks(active.id as number))} onResult={toast} />
+            <ActionButton label="Retry failed" onAction={wrap(() => adminApi.retryFailed(active.id as number))} onResult={toast} />
+            <ActionButton label="Force reset" onAction={wrap(() => adminApi.reset(active.id as number))} onResult={toast} confirm danger />
+            <ActionButton label="Cancel run" onAction={wrap(() => adminApi.cancel(active.id as number))} onResult={toast} confirm danger />
+          </>
+        )}
       </div>
     </Card>
   );
@@ -272,13 +309,13 @@ function ControlPanel({ overview, toast, refresh }: {
   const [onlyMissing, setOnlyMissing] = useState(true);
   const [force, setForce] = useState(false);
 
-  const dispatch = overview.system.dispatch_configured;
+  const platformOk = overview.platform?.ok !== false;
 
   async function start() {
-    const res = await adminApi.start({ mode, only_missing: onlyMissing, force, dispatch });
+    const res = await adminApi.start({ mode, only_missing: onlyMissing, force, dispatch: false });
     if (!res.ok) throw new Error(res.reason ?? "refused");
     refresh();
-    return res;
+    toast(true, `${res.count ?? 0} job(s) submitted to platform`);
   }
 
   return (
@@ -286,9 +323,9 @@ function ControlPanel({ overview, toast, refresh }: {
       <div className="flex items-center gap-2">
         <Play className="w-4 h-4 text-emerald-600" />
         <h2 className="text-sm font-bold text-slate-800">Start a crawl</h2>
-        {!dispatch && (
-          <span className="text-[11px] text-amber-600 inline-flex items-center gap-1">
-            <AlertTriangle className="w-3 h-3" /> dispatch not configured — run is enqueued for scheduled / Railway workers
+        {!platformOk && (
+          <span className="text-[11px] text-rose-600 inline-flex items-center gap-1">
+            <AlertTriangle className="w-3 h-3" /> platform unreachable
           </span>
         )}
       </div>
@@ -307,23 +344,22 @@ function ControlPanel({ overview, toast, refresh }: {
         </label>
         <label className="flex items-center gap-1.5 text-xs text-slate-600">
           <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
-          force (ignore active run)
+          force (ignore active)
         </label>
-        <ActionButton label="Start crawl" onAction={start} onResult={toast} />
+        <ActionButton label="Start crawl" onAction={start} onResult={(ok, msg) => { if (!ok) toast(ok, msg); }} />
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100">
-        <span className="text-xs font-semibold text-slate-500 mr-1">Maintenance:</span>
-        <ActionButton label="Clear all stale locks" size="xs" onResult={toast}
+        <span className="text-xs font-semibold text-slate-500 mr-1">Legacy maintenance:</span>
+        <ActionButton label="Clear stale locks" size="xs" onResult={toast}
           onAction={async () => { await adminApi.clearLocks(); refresh(); }} />
         <ActionButton label="Kill orphaned runs" size="xs" confirm danger onResult={toast}
           onAction={async () => { await adminApi.killOrphans(); refresh(); }} />
       </div>
 
       <div className="flex flex-wrap gap-3 text-[11px] text-slate-500">
-        <span className="inline-flex items-center gap-1"><Lock className="w-3 h-3" /> locks = expired leases</span>
-        <span className="inline-flex items-center gap-1"><Unlock className="w-3 h-3" /> reap = requeue + finalize</span>
-        <span className="inline-flex items-center gap-1"><Skull className="w-3 h-3" /> orphan = running run, no live worker</span>
+        <span className="inline-flex items-center gap-1"><Lock className="w-3 h-3" /> locks = expired leases (legacy)</span>
+        <span className="inline-flex items-center gap-1"><Skull className="w-3 h-3" /> orphan = zombie legacy run</span>
       </div>
     </Card>
   );

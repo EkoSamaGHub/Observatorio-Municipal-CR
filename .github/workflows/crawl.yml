@@ -2,11 +2,9 @@ name: Nightly Crawl
 
 on:
   schedule:
-    # 02:00 UTC = 20:00 CR — full discover pass on every active muni.
+    # 02:00 UTC = 20:00 CR — full discover pass on every active municipality.
     - cron: "0 2 * * *"
-    # 14:00 UTC = 08:00 CR — only-missing sweep so munis the nightly run
-    # didn't reach (worker time-budget cuts off ~mid-queue) get picked up
-    # within 12 h instead of waiting for the next full pass.
+    # 14:00 UTC = 08:00 CR — only-missing sweep for municipalities not yet indexed.
     - cron: "0 14 * * *"
   workflow_dispatch:
     inputs:
@@ -21,9 +19,9 @@ on:
       max_pages:
         description: "Max pages per municipality"
         required: false
-        default: "200"
+        default: "500"
       only_missing:
-        description: "discover only municipalities not yet indexed"
+        description: "Discover only municipalities not yet indexed"
         type: boolean
         default: false
 
@@ -31,101 +29,76 @@ concurrency:
   group: crawl
   cancel-in-progress: false
 
-# ── Task-queue architecture ───────────────────────────────────────────────────
-# 1) enqueue  — one producer creates a run + one task per municipality.
-# 2) work     — N parallel workers claim tasks (Postgres FOR UPDATE SKIP LOCKED).
-#               A worker that times out simply stops; its in-flight task's lease
-#               expires and another run (or the Railway reaper) reclaims it.
-# 3) finalize — reap requeues abandoned tasks, marks exhausted ones dead, and
-#               finalizes the run once every task is terminal.
-# Workers are idempotent and resumable, so the sweep is fault-tolerant and the
-# whole 84-muni run parallelises cleanly instead of running ~17h serially.
+# ── Platform architecture ──────────────────────────────────────────────────────
+# 1) enqueue  — submits one crawl job per municipality to the crawler-platform API.
+#               Outputs job_map JSON ({muni_id: job_id}).
+# 2) sync     — polls the platform until all jobs reach a terminal state,
+#               then syncs page results into the Observatory's Postgres DB.
+#               The platform handles all crawl parallelism via its own workers.
+#
+# Requirements:
+#   DATABASE_URL      — Observatory's Postgres (GHA secret)
+#   PLATFORM_API_URL  — Deployed crawler-platform URL (GHA secret)
 
 env:
   PYTHON_VERSION: "3.11"
 
 jobs:
   enqueue:
-    name: "Enqueue run"
+    name: "Submit crawl jobs"
     runs-on: ubuntu-latest
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      PLATFORM_API_URL: ${{ secrets.PLATFORM_API_URL }}
     outputs:
-      run_id: ${{ steps.enq.outputs.run_id }}
+      job_map: ${{ steps.enq.outputs.job_map }}
       count: ${{ steps.enq.outputs.count }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
       - run: pip install --upgrade pip && pip install -r requirements.txt
       - id: enq
-        name: Enqueue tasks
+        name: Submit jobs to platform
         run: |
           MODE="${{ github.event.inputs.mode || 'discover' }}"
+          MAX_PAGES="${{ github.event.inputs.max_pages || '500' }}"
           ONLY_MISSING=""
-          # Manual dispatch flag wins; otherwise the 14:00 cron is the
-          # only-missing sweep, the 02:00 cron is the full pass.
           if [ "${{ github.event.inputs.only_missing }}" = "true" ] \
              || [ "${{ github.event.schedule }}" = "0 14 * * *" ]; then
             ONLY_MISSING="--only-missing"
           fi
-          python crawler_cli.py enqueue --mode "$MODE" $ONLY_MISSING
-
-  work:
-    name: "Worker ${{ matrix.worker }}"
-    needs: enqueue
-    if: needs.enqueue.outputs.run_id != ''
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      # 4 workers — each holds one Postgres connection at a time, so the pool
-      # cost is 4 + Railway API + reaper, still comfortably under Timescale's
-      # connection ceiling. The previous 2-worker cap couldn't drain 84 tasks
-      # within a single 60-min GHA timeout, leaving the tail of the queue
-      # ('LI*', late 'PU*') permanently unclaimed. If Timescale starts
-      # rejecting connections during a run, drop back to 3 here.
-      matrix:
-        worker: [1, 2, 3, 4]
-    env:
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - run: pip install --upgrade pip && pip install -r requirements.txt
-      - name: Install headless Chromium (for Cloudflare-protected sites)
-        # Used by modules/stealth_fetch.py via Scrapling's StealthyFetcher to
-        # bypass CF "Just a moment..." managed challenges on the few munis
-        # that gate the plain Fetcher with a 403 JS interstitial.
-        run: python -m playwright install --with-deps chromium
-      - name: Work the queue
-        run: |
-          MAX_PAGES="${{ github.event.inputs.max_pages || '200' }}"
-          python crawler_cli.py work \
-            --run-id ${{ needs.enqueue.outputs.run_id }} \
-            --worker-id "gha-${{ github.run_id }}-${{ matrix.worker }}" \
-            --time-budget 5000 \
+          python crawler_cli.py enqueue \
+            --mode "$MODE" \
             --max-pages "$MAX_PAGES" \
-            --delay 1.0
+            $ONLY_MISSING
 
-  finalize:
-    name: "Finalize run"
-    needs: [enqueue, work]
-    if: always() && needs.enqueue.outputs.run_id != ''
+  sync:
+    name: "Wait & sync results"
+    needs: enqueue
+    if: needs.enqueue.outputs.count != '0'
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      PLATFORM_API_URL: ${{ secrets.PLATFORM_API_URL }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
       - run: pip install --upgrade pip && pip install -r requirements.txt
-      - name: Reap + finalize
-        run: python crawler_cli.py reap --run-id ${{ needs.enqueue.outputs.run_id }}
+      - name: Poll jobs and sync results
+        run: |
+          python crawler_cli.py work \
+            --job-map '${{ needs.enqueue.outputs.job_map }}' \
+            --timeout 18000 \
+            --poll-interval 60
+      - name: Final status
+        if: always()
+        run: |
+          python crawler_cli.py progress \
+            --job-map '${{ needs.enqueue.outputs.job_map }}'

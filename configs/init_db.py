@@ -202,6 +202,21 @@ def _init_sqlite(conn) -> None:
     )
     """)
 
+    # Tracks crawler-platform jobs the reconciler has already handled (synced or
+    # escalated), so the proactive worker loop doesn't process a job twice and
+    # knows which empty/failed jobs were already re-run.
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS platform_jobs (
+        job_id          TEXT    PRIMARY KEY,
+        municipality_id TEXT,
+        mode            TEXT,
+        outcome         TEXT,
+        retried_as      TEXT,
+        pages_synced    INTEGER DEFAULT 0,
+        handled_at      TEXT    NOT NULL
+    )
+    """)
+
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pages_municipality ON pages(municipality_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_municipality ON documents(municipality_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_diffs_municipality ON page_diffs(municipality_id)")
@@ -212,6 +227,7 @@ def _init_sqlite(conn) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_crawl_events_created ON crawl_events(created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_crawl_events_run ON crawl_events(run_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_crawl_events_muni ON crawl_events(municipality_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_platform_jobs_muni ON platform_jobs(municipality_id)")
 
 
 def _init_postgres(conn) -> None:
@@ -350,6 +366,18 @@ def _init_postgres(conn) -> None:
     )
     """)
 
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS platform_jobs (
+        job_id          TEXT    PRIMARY KEY,
+        municipality_id TEXT,
+        mode            TEXT,
+        outcome         TEXT,
+        retried_as      TEXT,
+        pages_synced    INTEGER DEFAULT 0,
+        handled_at      TEXT    NOT NULL
+    )
+    """)
+
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pages_municipality ON pages(municipality_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_documents_municipality ON documents(municipality_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_diffs_municipality ON page_diffs(municipality_id)")
@@ -360,6 +388,7 @@ def _init_postgres(conn) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_crawl_events_created ON crawl_events(created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_crawl_events_run ON crawl_events(run_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_crawl_events_muni ON crawl_events(municipality_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_platform_jobs_muni ON platform_jobs(municipality_id)")
 
     # Resync sequences in case rows were inserted with explicit IDs (e.g. after migration)
     for table in ["crawl_runs", "crawl_tasks", "crawl_events", "pages", "documents", "page_diffs", "page_links", "dev_sessions", "ssl_reports", "domain_expiry"]:

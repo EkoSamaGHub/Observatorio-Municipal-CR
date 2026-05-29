@@ -1,190 +1,251 @@
 """
-Crawler queue CLI — the single entrypoint for the task-queue architecture.
+Crawler queue CLI — wraps the crawler-platform API.
 
 Subcommands:
-  enqueue   Create a run and one task per municipality (producer).
-  work      Claim and process tasks until drained or time budget hit (worker).
-  reap      Requeue dead-worker tasks / mark exhausted ones dead / finalize.
-  progress  Print run progress as JSON.
+  enqueue   Submit one crawl job per municipality to the platform (producer).
+  work      Poll jobs until complete, then sync results into Observatory DB.
+  reap      Report status of all jobs in a job_map; cancel stuck ones.
+  progress  Print live status for each job in a job_map as JSON.
 
-Designed so GitHub Actions can run `enqueue` once, fan out N parallel `work`
-jobs against the same run, then `reap` to finalize. Workers are safe to run in
-parallel (Postgres SELECT ... FOR UPDATE SKIP LOCKED) and recover from crashes
-(expired leases are reclaimed).
+Designed so GitHub Actions can run `enqueue` once, then `work` (single job)
+to wait for the platform's distributed workers and sync results. The platform
+handles all crawl parallelism internally via BullMQ workers.
+
+Env vars:
+  PLATFORM_API_URL  Base URL of the crawler-platform API
+                    (default: http://localhost:3000)
+  DATABASE_URL      Observatory Postgres (leave unset to use local SQLite)
 """
 
 import argparse
 import json
 import os
-import socket
-import time
-import uuid
+import sys
 
 from configs.db import get_connection
 from configs.init_db import init_db
 from crawlers.crawl_all import load_municipalities
-from crawlers.scrapling_crawler import ScraplingCrawler
-from modules import task_queue
+from modules import platform_runner
 from modules.logger import logger
-from pipeline import crawl_one_municipality, select_municipality_ids
+from modules.platform_client import PLATFORM_API_URL, CrawlerPlatformClient
 
 
-def _worker_id() -> str:
-    return f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:6]}"
+# ── helpers ───────────────────────────────────────────────────────────────────
 
-
-def _emit_github_output(key: str, value) -> None:
+def _emit_github_output(key: str, value: str) -> None:
     out = os.environ.get("GITHUB_OUTPUT")
     if out:
         with open(out, "a", encoding="utf-8") as f:
             f.write(f"{key}={value}\n")
 
 
-def _latest_active_run() -> int | None:
-    conn = get_connection()
-    try:
-        row = conn.execute(
-            "SELECT id FROM crawl_runs WHERE status='running' ORDER BY started_at DESC LIMIT 1"
-        ).fetchone()
-    finally:
-        conn.close()
-    return int(row["id"]) if row else None
+def _select_muni_ids(mode: str, only_missing: bool, ids: list[str] | None) -> list[str]:
+    munis = [m for m in load_municipalities(active_only=True)]
 
+    if ids:
+        valid = {m["id"] for m in munis}
+        return [i for i in ids if i in valid]
 
-# ── drive_queue: the worker loop ─────────────────────────────────────────────────
-
-def drive_queue(run_id: int, worker_id: str, time_budget: int = 3000,
-                request_delay: float = 1.0, max_pages: int = 200, max_depth: int = 2,
-                lease_seconds: int = 900) -> dict:
-    lookup = {m["id"]: m for m in load_municipalities(active_only=False)}
-    crawler = ScraplingCrawler(request_delay=request_delay, max_pages=max_pages,
-                               respect_robots=True, verify_ssl=False)
-    start = time.monotonic()
-    processed = 0
-
-    logger.info(f"[{worker_id}] worker started on run {run_id} (budget={time_budget}s)")
-
-    while True:
-        if time.monotonic() - start > time_budget:
-            logger.info(f"[{worker_id}] time budget reached, stopping")
-            break
-
-        task = task_queue.claim_task(run_id, worker_id, lease_seconds=lease_seconds)
-        if not task:
-            logger.info(f"[{worker_id}] no claimable tasks left")
-            break
-
-        task_id = task["id"]
-        muni_id = task["municipality_id"]
-        muni = lookup.get(muni_id)
-        if not muni:
-            task_queue.fail_task(task_id, f"unknown municipality_id {muni_id}")
-            continue
-
-        logger.info(f"[{worker_id}] claimed {muni_id} (task {task_id}, attempt {task['attempts']})")
+    if mode == "monitor":
+        # Only municipalities that already have pages indexed
+        conn = get_connection()
         try:
-            def hb(pages, _tid=task_id):
-                task_queue.heartbeat(_tid, worker_id, lease_seconds, pages)
+            rows = conn.execute(
+                "SELECT DISTINCT municipality_id FROM pages"
+            ).fetchall()
+            indexed = {r["municipality_id"] for r in rows}
+        finally:
+            conn.close()
+        return [m["id"] for m in munis if m["id"] in indexed]
 
-            stats = crawl_one_municipality(
-                muni, crawler, task["mode"], max_depth, max_pages, on_progress=hb
-            )
-            task_queue.complete_task(
-                task_id, pages_found=stats["fetched"],
-                sitemap_total=stats["sitemap_total"], completeness_pct=stats["completeness"],
-            )
-            processed += 1
-            logger.info(f"[{worker_id}] done {muni_id}: fetched={stats['fetched']} "
-                        f"new={stats['new']} errors={stats['errors']}")
-        except Exception as e:
-            logger.error(f"[{worker_id}] {muni_id} failed: {e}")
-            task_queue.fail_task(task_id, str(e))
+    if only_missing:
+        conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT DISTINCT municipality_id FROM pages"
+            ).fetchall()
+            indexed = {r["municipality_id"] for r in rows}
+        finally:
+            conn.close()
+        return [m["id"] for m in munis if m["id"] not in indexed]
 
-    prog = task_queue.reap_run(run_id)
-    logger.info(f"[{worker_id}] stopped — processed {processed}; run progress: {prog}")
-    return prog
+    return [m["id"] for m in munis]
 
 
-# ── Subcommands ──────────────────────────────────────────────────────────────────
+def _load_job_map(raw: str) -> dict[str, str]:
+    """Parse --job-map argument (JSON string → {muni_id: job_id})."""
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("job_map must be a JSON object")
+        return data
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid --job-map JSON: {e}")
+        sys.exit(1)
+
+
+# ── enqueue ───────────────────────────────────────────────────────────────────
 
 def cmd_enqueue(args) -> None:
     init_db()
-    ids = select_municipality_ids(args.mode, only_missing=args.only_missing, ids=args.ids)
+    munis = {m["id"]: m for m in load_municipalities(active_only=False)}
+    ids = _select_muni_ids(args.mode, only_missing=args.only_missing, ids=args.ids)
+
     if not ids:
         logger.info("enqueue: no municipalities match — nothing to do")
-        _emit_github_output("run_id", "")
+        _emit_github_output("job_map", "{}")
         _emit_github_output("count", "0")
         return
-    run_id = task_queue.create_run(ids, args.mode, max_attempts=args.max_attempts)
-    logger.info(f"enqueue: run {run_id} created with {len(ids)} tasks (mode={args.mode})")
-    print(run_id)
-    _emit_github_output("run_id", run_id)
-    _emit_github_output("count", len(ids))
 
+    with CrawlerPlatformClient() as client:
+        if not client.ping():
+            logger.error(
+                f"Platform API unreachable at {PLATFORM_API_URL} — "
+                "is the crawler-platform running?"
+            )
+            sys.exit(1)
+        job_map = platform_runner.submit_jobs(
+            client, ids, munis, args.mode, rendering=args.rendering
+        )
+
+    job_map_json = json.dumps(job_map)
+    print(job_map_json)
+    _emit_github_output("job_map", job_map_json)
+    _emit_github_output("count", str(len(job_map)))
+    logger.info(f"enqueue: {len(job_map)} job(s) submitted")
+
+
+# ── work ──────────────────────────────────────────────────────────────────────
 
 def cmd_work(args) -> None:
     init_db()
-    run_id = args.run_id or _latest_active_run()
-    if not run_id:
-        logger.info("work: no active run found")
+    job_map = _load_job_map(args.job_map)
+    if not job_map:
+        logger.info("work: empty job_map — nothing to do")
+        print(json.dumps({"pages": 0, "documents": 0, "new": 0, "changed": 0, "errors": 0}))
         return
-    prog = drive_queue(
-        run_id, args.worker_id or _worker_id(), time_budget=args.time_budget,
-        request_delay=args.delay, max_pages=args.max_pages, max_depth=args.depth,
-        lease_seconds=args.lease,
-    )
-    print(json.dumps(prog, indent=2))
 
+    munis = {m["id"]: m for m in load_municipalities(active_only=False)}
+    # Infer mode from the first job name so escalation re-runs use the right seeds.
+    mode = "discover"
+
+    with CrawlerPlatformClient() as client:
+        logger.info(f"[work] watching {len(job_map)} job(s) (timeout={args.timeout}s)")
+        try:
+            first = client.get_job(next(iter(job_map.values())))
+            parsed = platform_runner.parse_job_name(first.get("name", ""))
+            if parsed:
+                mode = parsed["mode"]
+        except Exception:
+            pass
+
+        total = platform_runner.drive_and_sync(
+            client, job_map, munis, mode,
+            timeout_sec=args.timeout, poll_sec=args.poll_interval,
+            auto_retry=not args.no_retry,
+        )
+
+    print(json.dumps(total, indent=2))
+
+
+# ── reap ──────────────────────────────────────────────────────────────────────
 
 def cmd_reap(args) -> None:
-    init_db()
-    if args.all:
-        progs = task_queue.reap_all_active()
-        print(json.dumps(progs, indent=2))
+    job_map = _load_job_map(args.job_map)
+    if not job_map:
+        print(json.dumps({}))
         return
-    run_id = args.run_id or _latest_active_run()
-    if not run_id:
-        logger.info("reap: no active run found")
-        return
-    print(json.dumps(task_queue.reap_run(run_id), indent=2))
 
+    report: dict[str, str] = {}
+    with CrawlerPlatformClient() as client:
+        for muni_id, job_id in job_map.items():
+            try:
+                job = client.get_job(job_id)
+                status = job.get("status", "UNKNOWN")
+                report[muni_id] = status
+
+                if args.cancel_stuck and not client.is_terminal(status):
+                    logger.info(f"[reap] cancelling stuck job {job_id} ({muni_id})")
+                    client.cancel_job(job_id)
+                    report[muni_id] = "CANCELED"
+            except Exception as e:
+                logger.error(f"[reap] {muni_id} {job_id}: {e}")
+                report[muni_id] = "ERROR"
+
+    print(json.dumps(report, indent=2))
+
+
+# ── progress ──────────────────────────────────────────────────────────────────
 
 def cmd_progress(args) -> None:
-    run_id = args.run_id or _latest_active_run()
-    if not run_id:
-        print(json.dumps({"active": False}))
+    job_map = _load_job_map(args.job_map)
+    if not job_map:
+        print(json.dumps({}))
         return
-    print(json.dumps(task_queue.run_progress(run_id), indent=2))
 
+    summary: dict[str, dict] = {}
+    with CrawlerPlatformClient() as client:
+        for muni_id, job_id in job_map.items():
+            try:
+                job = client.get_job(job_id)
+                summary[muni_id] = {
+                    "job_id": job_id,
+                    "status": job.get("status"),
+                    "pages_fetched": job.get("pagesFetched", 0),
+                    "pages_extracted": job.get("pagesExtracted", 0),
+                    "errors": job.get("errorCount", 0),
+                }
+            except Exception as e:
+                summary[muni_id] = {"job_id": job_id, "status": "ERROR", "error": str(e)}
+
+    print(json.dumps(summary, indent=2))
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="MUNI84CR crawler queue CLI")
+    p = argparse.ArgumentParser(description="MUNI84CR crawler CLI (platform edition)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    e = sub.add_parser("enqueue", help="create a run + tasks")
+    # enqueue
+    e = sub.add_parser("enqueue", help="submit crawl jobs to the platform")
     e.add_argument("--mode", choices=["discover", "monitor"], default="discover")
-    e.add_argument("--only-missing", action="store_true")
-    e.add_argument("--ids", nargs="*")
-    e.add_argument("--max-attempts", type=int, default=3)
+    e.add_argument("--only-missing", action="store_true",
+                   help="discover only municipalities not yet indexed")
+    e.add_argument("--ids", nargs="*", metavar="ID",
+                   help="specific municipality IDs (default: all active)")
+    e.add_argument("--depth", type=int, default=3,
+                   help="max crawl depth for discover mode (default 3)")
+    e.add_argument("--max-pages", type=int, default=500,
+                   help="max pages per municipality for discover mode (default 500)")
+    e.add_argument("--rendering", choices=["AUTO", "ALWAYS", "NEVER"], default="AUTO",
+                   help="page rendering mode (default AUTO)")
     e.set_defaults(func=cmd_enqueue)
 
-    w = sub.add_parser("work", help="process tasks until drained or time budget")
-    w.add_argument("--run-id", type=int)
-    w.add_argument("--worker-id")
-    w.add_argument("--time-budget", type=int, default=3000)
-    w.add_argument("--delay", type=float, default=1.0)
-    w.add_argument("--max-pages", type=int, default=200)
-    w.add_argument("--depth", type=int, default=2)
-    w.add_argument("--lease", type=int, default=900)
+    # work
+    w = sub.add_parser("work", help="poll jobs until complete, then sync results")
+    w.add_argument("--job-map", required=True,
+                   help='JSON string mapping muni_id → job_id from enqueue output')
+    w.add_argument("--timeout", type=int, default=7200,
+                   help="max seconds to wait for all jobs (default 7200)")
+    w.add_argument("--poll-interval", type=int, default=30,
+                   help="seconds between status polls (default 30)")
+    w.add_argument("--no-retry", action="store_true",
+                   help="disable proactive re-run of empty/failed municipalities")
     w.set_defaults(func=cmd_work)
 
-    r = sub.add_parser("reap", help="requeue/expire/finalize")
-    r.add_argument("--run-id", type=int)
-    r.add_argument("--all", action="store_true")
+    # reap
+    r = sub.add_parser("reap", help="check job statuses; optionally cancel stuck jobs")
+    r.add_argument("--job-map", required=True,
+                   help='JSON string mapping muni_id → job_id')
+    r.add_argument("--cancel-stuck", action="store_true",
+                   help="cancel jobs that are not yet in a terminal state")
     r.set_defaults(func=cmd_reap)
 
-    pr = sub.add_parser("progress", help="print run progress")
-    pr.add_argument("--run-id", type=int)
+    # progress
+    pr = sub.add_parser("progress", help="print live job status as JSON")
+    pr.add_argument("--job-map", required=True,
+                    help='JSON string mapping muni_id → job_id')
     pr.set_defaults(func=cmd_progress)
 
     args = p.parse_args()

@@ -1,21 +1,21 @@
-﻿scrapling
-curl_cffi
-browserforge
-playwright
-beautifulsoup4
-pandas
-lxml
-aiofiles
-tqdm
-pydantic
-requests
-PyMuPDF
-pdfplumber
-tldextract
-aiohttp
+﻿# Observatory API
 fastapi
 uvicorn[standard]
-psycopg[binary,pool]
+pydantic
 python-dotenv
 python-whois
-# cache-bust: 20260524-V4-PSYCOPG3-FORCE
+requests
+
+# Observatory database
+psycopg[binary,pool]
+
+# Observatory utilities
+beautifulsoup4
+lxml
+pdfplumber
+PyMuPDF
+tldextract
+pandas
+aiofiles
+tqdm
+aiohttp

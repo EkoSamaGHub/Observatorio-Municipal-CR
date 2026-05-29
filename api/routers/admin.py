@@ -406,3 +406,25 @@ def recrawl_muni(municipality_id: str, body: RecrawlBody):
     return admin_ops.recrawl_municipality(
         municipality_id, mode=body.mode, dispatch=body.dispatch
     )
+
+
+# ── platform passthrough ────────────────────────────────────────────────────
+
+@router.get("/platform/jobs", dependencies=_auth)
+def get_platform_jobs(limit: int = 20):
+    return admin_ops.platform_jobs(limit=min(limit, 100))
+
+
+@router.get("/platform/jobs/{job_id}", dependencies=_auth)
+def get_platform_job_detail(job_id: str):
+    return admin_ops.platform_job_detail(job_id)
+
+
+@router.get("/platform/jobs/{job_id}/errors", dependencies=_auth)
+def get_platform_job_errors(job_id: str, limit: int = 50):
+    return admin_ops.platform_job_errors(job_id, limit=min(limit, 500))
+
+
+@router.post("/platform/jobs/{job_id}/cancel", dependencies=_auth)
+def cancel_platform_job(job_id: str):
+    return admin_ops.cancel_platform_job(job_id)

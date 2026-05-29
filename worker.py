@@ -1,11 +1,15 @@
 """
-MUNI84CR Railway worker — crawl pipeline + HTTP health check.
+MUNI84CR Railway worker — platform-backed crawl loop + HTTP health check.
 
 Main thread:       HTTPServer on $PORT  (satisfies Railway health check)
-Background thread: discover -> monitor pipeline loop
+Background thread: periodic discover + monitor passes via crawler-platform API
 
-Start command: cd /app && python -u worker.py
-Env vars:      WORKER_MODE=1  DATABASE_URL=<postgres url>
+Env vars:
+  PORT              Health check port (default 8080)
+  DATABASE_URL      Observatory Postgres connection string
+  PLATFORM_API_URL  Crawler-platform base URL (default http://localhost:3000)
+  WORKER_DISCOVER   Set to "1" to run a discover pass before the monitor loop
+  MONITOR_HOURS     Hours between monitor passes (default 6)
 """
 
 import json
@@ -16,23 +20,22 @@ import threading
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-print("worker.py: STARTED BUILD=cfefa39-PSYCOPG3", flush=True)
+print("worker.py: STARTED", flush=True)
 
 PORT = int(os.environ.get("PORT", 8080))
-MONITOR_HOURS  = 6
-RETRY_DELAY    = 60
+MONITOR_HOURS = float(os.environ.get("MONITOR_HOURS", "6"))
+RETRY_DELAY = 60
 
-_state = {"phase": "starting", "coverage": "?/?", "last_run": None, "status": "ok"}
+_state = {
+    "phase": "starting",
+    "coverage": "?/?",
+    "last_run": None,
+    "status": "ok",
+}
 
 
-def _now():
+def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-
-def _now_iso():
-    # ISO format matches pipeline.py's started_at/finished_at so the duration
-    # SQL (finished_at::timestamptz) and last_crawled comparisons stay valid.
-    return datetime.now(timezone.utc).isoformat()
 
 
 # ── Health check HTTP server ──────────────────────────────────────────────────
@@ -45,12 +48,14 @@ class _H(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
-    def log_message(self, *a): pass
+
+    def log_message(self, *a):
+        pass
 
 
 # ── Pipeline thread ───────────────────────────────────────────────────────────
 
-def get_coverage():
+def get_coverage() -> tuple[int, int]:
     from configs.db import get_connection
     with open("municipalities.json", encoding="utf-8") as f:
         total = len(json.load(f))
@@ -66,40 +71,9 @@ def get_coverage():
 
 
 def pipeline_loop():
-    time.sleep(3)  # give HTTP server time to bind first
+    time.sleep(3)  # let HTTP server bind first
     print("[worker] Pipeline thread started", flush=True)
 
-    # ── Granular import diagnostics (each step printed before+after) ──────────
-    print("[worker] A: importing configs.init_db ...", flush=True)
-    try:
-        from configs.init_db import init_db
-        print("[worker] A: OK", flush=True)
-    except Exception as e:
-        print(f"[worker] A: FAIL — {e}", flush=True)
-        _state["status"] = f"import error (init_db): {e}"
-        return
-
-    print("[worker] B: importing scrapling.fetchers.Fetcher ...", flush=True)
-    try:
-        from scrapling.fetchers import Fetcher  # noqa — just testing import
-        print("[worker] B: OK", flush=True)
-    except Exception as e:
-        print(f"[worker] B: FAIL — {e}", flush=True)
-        _state["status"] = f"import error (scrapling): {e}"
-        return
-
-    print("[worker] C: importing pipeline.run_pipeline ...", flush=True)
-    try:
-        from pipeline import run_pipeline
-        print("[worker] C: OK", flush=True)
-    except Exception as e:
-        print(f"[worker] C: FAIL — {e}", flush=True)
-        _state["status"] = f"import error (pipeline): {e}"
-        return
-
-    print("[worker] ALL IMPORTS OK", flush=True)
-
-    # Use stdlib logging directed to stdout (bypasses file handler in modules/logger)
     import logging
     logging.basicConfig(
         level=logging.INFO,
@@ -108,44 +82,47 @@ def pipeline_loop():
         force=True,
     )
     log = logging.getLogger("worker")
-    log.info("[worker] Logging configured → stdout")
+
+    # ── init DB ──────────────────────────────────────────────────────────────
+    try:
+        from configs.init_db import init_db
+    except Exception as e:
+        log.error(f"[worker] import init_db failed: {e}")
+        _state["status"] = f"import error: {e}"
+        return
 
     db_url = os.environ.get("DATABASE_URL", "NOT SET")
-    log.info(f"[worker] DATABASE_URL set: {'yes ('+db_url[:30]+'...)' if db_url != 'NOT SET' else 'NO — will use SQLite'}")
+    log.info(f"[worker] DATABASE_URL: {'set' if db_url != 'NOT SET' else 'NOT SET (SQLite)'}")
 
-    # ── TCP connectivity check (fast fail if Timescale unreachable) ───────────
     if db_url != "NOT SET":
-        import socket as _socket
-        from urllib.parse import urlparse as _urlparse
-        _u = _urlparse(db_url)
-        _host, _port = _u.hostname, _u.port or 5432
-        log.info(f"[worker] TCP probe → {_host}:{_port} ...")
+        import socket as _sock
+        from urllib.parse import urlparse as _up
+        u = _up(db_url)
+        host, port = u.hostname, u.port or 5432
+        log.info(f"[worker] TCP probe -> {host}:{port} ...")
         try:
-            _s = _socket.create_connection((_host, _port), timeout=15)
-            _s.close()
-            log.info(f"[worker] TCP probe → OK (reachable)")
-        except Exception as _e:
-            log.error(f"[worker] TCP probe → FAILED: {_e}")
-            log.error("[worker] Timescale unreachable from Railway — check IP allowlist / firewall")
-            _state["status"] = f"tcp_fail: {_e}"
+            s = _sock.create_connection((host, port), timeout=15)
+            s.close()
+            log.info("[worker] TCP probe -> OK")
+        except Exception as e:
+            log.error(f"[worker] TCP probe failed: {e}")
+            _state["status"] = f"tcp_fail: {e}"
             return
 
-    # ── init_db with a hard 25-second thread-level deadline ─────────────────
-    # psycopg2's SSL negotiation can hang even with connect_timeout in the DSN;
-    # this daemon thread guarantees we bail out and log a clear error.
-    log.info("[worker] calling init_db() ...")
-    _init_result: list = [None]   # [None] | ["ok"] | Exception
+    _init_result: list = [None]
+
     def _run_init():
         try:
             init_db()
             _init_result[0] = "ok"
         except Exception as exc:
             _init_result[0] = exc
-    _t = threading.Thread(target=_run_init, daemon=True, name="init_db")
-    _t.start()
-    _t.join(timeout=25)
-    if _t.is_alive():
-        log.error("[worker] init_db timed out after 25 s — check DB connectivity")
+
+    t = threading.Thread(target=_run_init, daemon=True, name="init_db")
+    t.start()
+    t.join(timeout=25)
+    if t.is_alive():
+        log.error("[worker] init_db timed out after 25 s")
         _state["status"] = "init_db_timeout"
         return
     if isinstance(_init_result[0], Exception):
@@ -154,91 +131,91 @@ def pipeline_loop():
         return
     log.info("[worker] DB ready")
 
+    # ── platform check ────────────────────────────────────────────────────────
+    from modules.platform_client import PLATFORM_API_URL, CrawlerPlatformClient
+    from modules import platform_runner
     from configs.db import get_connection
-    from crawler_cli import drive_queue
-    from modules import task_queue
-    from pipeline import select_municipality_ids
+    from crawlers.crawl_all import load_municipalities
 
-    # ── Reap orphaned runs ────────────────────────────────────────────────────
-    # Close legacy (task-less) runs left NULL by a previously killed process —
-    # atexit never fires on SIGKILL — then finalize/requeue any task-based runs.
-    try:
-        c = get_connection()
-        c.execute(
-            "UPDATE crawl_runs SET finished_at=%s, status='done' "
-            "WHERE finished_at IS NULL "
-            "AND id NOT IN (SELECT DISTINCT run_id FROM crawl_tasks)",
-            (_now_iso(),),
-        )
-        c.commit()
-        c.close()
-        task_queue.reap_all_active()
-        log.info("[worker] reaped orphaned runs / requeued stale tasks")
-    except Exception as e:
-        log.error(f"[worker] orphan-run reap failed: {e}")
+    log.info(f"[worker] Platform API: {PLATFORM_API_URL}")
+    client = CrawlerPlatformClient()
+    if not client.ping():
+        log.error(f"[worker] Platform API unreachable at {PLATFORM_API_URL}")
+        _state["status"] = "platform_unreachable"
+        return
+    log.info("[worker] Platform API -> reachable")
 
-    # ── Background reaper ──────────────────────────────────────────────────────
-    # Continuously requeues tasks abandoned by crashed workers (e.g. timed-out
-    # GitHub Actions jobs) and finalizes runs once every task is terminal.
-    def _reaper_loop():
-        while True:
-            try:
-                task_queue.reap_all_active()
-            except Exception as exc:
-                log.error(f"[reaper] {exc}")
-            time.sleep(300)
-    threading.Thread(target=_reaper_loop, daemon=True, name="reaper").start()
+    munis_lookup = {m["id"]: m for m in load_municipalities(active_only=False)}
 
-    def _drive(mode: str, only_missing: bool, budget_hours: float):
-        ids = select_municipality_ids(mode, only_missing=only_missing)
-        if not ids:
-            log.info(f"[worker] {mode}: nothing to enqueue")
-            return
-        run_id = task_queue.create_run(ids, mode, worker_id="railway")
-        log.info(f"[worker] {mode} run {run_id}: {len(ids)} municipalities enqueued")
+    def _select_ids(mode: str, only_missing: bool = False) -> list[str]:
+        active = [m for m in load_municipalities(active_only=True)]
+        conn = get_connection()
         try:
-            prog = drive_queue(
-                run_id, worker_id=f"railway-{os.getpid()}",
-                time_budget=int(budget_hours * 3600),
-                request_delay=2.0, max_pages=1000, max_depth=2,
-            )
-            _state["status"] = "ok"
-            _state.update(coverage=f"{prog['done']}/{prog['total']} "
-                                   f"(done={prog['done']} dead={prog['dead']})",
-                          last_run=_now())
-        except Exception as exc:
-            log.error(f"[worker] {mode} run error: {exc}")
-            _state["status"] = f"error: {exc}"
+            indexed = {
+                r["municipality_id"]
+                for r in conn.execute("SELECT DISTINCT municipality_id FROM pages").fetchall()
+            }
+        finally:
+            conn.close()
+        if mode == "monitor":
+            return [m["id"] for m in active if m["id"] in indexed]
+        if only_missing:
+            return [m["id"] for m in active if m["id"] not in indexed]
+        return [m["id"] for m in active]
 
-    # Phase 1 — discovery is OWNED BY GITHUB ACTIONS (the canonical crawler).
-    # Running it here too would double the crawl load and the concurrent DB
-    # connections, which can exhaust Timescale's limit and hang the API/SSR.
-    # Opt in explicitly with WORKER_DISCOVER=1 only if Actions is unavailable.
+    def _submit(mode: str, only_missing: bool = False) -> int:
+        ids = _select_ids(mode, only_missing=only_missing)
+        if not ids:
+            log.info(f"[worker] {mode}: nothing to submit")
+            return 0
+        job_map = platform_runner.submit_jobs(
+            client, ids, munis_lookup, mode, log=log.info
+        )
+        log.info(f"[worker] {mode}: submitted {len(job_map)} job(s)")
+        return len(job_map)
+
+    # The reconcile loop is the heart of the proactive model: it continuously
+    # syncs completed Observatory jobs into the DB and RE-RUNS empty/failed
+    # municipalities (escalating to full rendering) without anyone waiting on
+    # them — covering worker-, GHA-, and admin-started crawls alike.
+    RECONCILE_SECONDS = int(os.environ.get("RECONCILE_SECONDS", "60"))
+
+    # Optional discover-on-startup (owned by GHA by default; opt in explicitly).
     if os.environ.get("WORKER_DISCOVER"):
         _state["phase"] = "discover"
-        _drive("discover", only_missing=True, budget_hours=6)
+        _submit("discover", only_missing=True)
 
-    # Phase 2 — periodic monitor passes (watchdog).
     _state["phase"] = "monitor"
+    last_monitor = 0.0
     while True:
-        log.info(f"[worker] Monitor pass — {_now()}")
-        _drive("monitor", only_missing=False, budget_hours=MONITOR_HOURS)
         try:
+            summary = platform_runner.reconcile(client, munis_lookup, log=log.info)
+            if any(summary.values()):
+                log.info(f"[worker] reconcile: {summary}")
             i, t = get_coverage()
-            _state.update(coverage=f"{i}/{t}", last_run=_now())
-        except Exception:
-            pass
-        log.info(f"[worker] Sleeping {MONITOR_HOURS}h")
-        time.sleep(MONITOR_HOURS * 3600)
+            _state.update(coverage=f"{i}/{t}", last_run=_now(), status="ok")
+        except Exception as e:
+            log.error(f"[worker] reconcile error: {e}")
+            _state["status"] = f"error: {e}"
+
+        # Kick off a fresh monitor pass every MONITOR_HOURS; the reconcile loop
+        # above will sync + self-heal the results as they complete.
+        now = time.monotonic()
+        if now - last_monitor >= MONITOR_HOURS * 3600:
+            log.info(f"[worker] Monitor pass — {_now()}")
+            try:
+                _submit("monitor")
+            except Exception as e:
+                log.error(f"[worker] monitor submit error: {e}")
+            last_monitor = now
+
+        time.sleep(RECONCILE_SECONDS)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 print(f"worker.py: binding to port {PORT}", flush=True)
-print(f"worker.py: WORKER_MODE={os.environ.get('WORKER_MODE', 'NOT SET')}", flush=True)
-
 threading.Thread(target=pipeline_loop, daemon=True, name="pipeline").start()
-
 print("worker.py: starting HTTPServer...", flush=True)
 server = HTTPServer(("0.0.0.0", PORT), _H)
 print(f"worker.py: listening on port {PORT} — health check ready", flush=True)

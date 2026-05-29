@@ -60,6 +60,71 @@ export interface Worker {
   alive: boolean;
 }
 
+export interface PlatformJob {
+  id: string;
+  name: string;
+  status: "QUEUED" | "RUNNING" | "PAUSED" | "DRAINING" | "COMPLETED" | "FAILED" | "CANCELED";
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  // List-endpoint flat fields
+  pagesFetched?: number;
+  errorCount?: number;
+  // Detail-endpoint nested fields (present when fetched individually)
+  stats?: {
+    pagesDiscovered: number;
+    pagesFetched: number;
+    pagesExtracted: number;
+    errors: number;
+    bytesFetched: number;
+  };
+}
+
+export interface PlatformInfo {
+  ok: boolean;
+  url: string;
+  active_count?: number;
+  active_jobs?: PlatformJob[];
+  recent_jobs?: PlatformJob[];
+  error?: string;
+}
+
+export interface PlatformError {
+  id: string;
+  jobId: string;
+  taskId: string | null;
+  pageId: string | null;
+  stage: string;       // fetch | render | extract | embed
+  code: string;        // SSRF:dns-empty | RETRY_EXHAUSTED | TOO_LARGE | ...
+  message: string;
+  details: string | null;
+  attempt: number;
+  terminal: boolean;
+  occurredAt: string;
+}
+
+export interface PlatformErrorsResult {
+  ok: boolean;
+  count?: number;
+  by_code?: Record<string, number>;
+  errors: PlatformError[];
+  error?: string;
+}
+
+export interface PlatformJobDetail extends PlatformJob {
+  ok: boolean;
+  stats?: {
+    pagesDiscovered: number;
+    pagesFetched: number;
+    pagesExtracted: number;
+    errors: number;
+    bytesFetched: number;
+  };
+  tasksByStatus?: Record<string, number>;
+  frontier?: { depth: number };
+  error?: string;
+}
+
 export interface Overview {
   generated_at: string;
   system: {
@@ -67,6 +132,7 @@ export interface Overview {
     backend: string;
     stale_minutes: number;
     dispatch_configured: boolean;
+    platform_url?: string;
     environment: Record<string, string | boolean>;
   };
   coverage: {
@@ -81,6 +147,7 @@ export interface Overview {
   last_success: RunSummary | null;
   last_failed: RunSummary | null;
   workers: { count: number; alive: number; list: Worker[] };
+  platform?: PlatformInfo;
 }
 
 export interface TaskRow {
@@ -170,8 +237,14 @@ export const adminApi = {
   },
 
   start: (body: { mode: string; only_missing: boolean; force: boolean; dispatch: boolean }) =>
-    post<{ ok: boolean; run_id?: number; reason?: string; count?: number }>(
-      "/admin/crawl/start", body),
+    post<{
+      ok: boolean;
+      run_id?: number;
+      job_map?: Record<string, string>;
+      count?: number;
+      reason?: string;
+      source?: "platform" | "legacy";
+    }>("/admin/crawl/start", body),
   pause: (id: number) => post(`/admin/crawl/${id}/pause`),
   resume: (id: number) => post(`/admin/crawl/${id}/resume`),
   stop: (id: number) => post(`/admin/crawl/${id}/stop`),
@@ -188,4 +261,13 @@ export const adminApi = {
     post(`/admin/runs/${runId}/municipalities/${muni}/skip`),
   recrawl: (muni: string, mode = "discover") =>
     post(`/admin/municipalities/${muni}/recrawl`, { mode, dispatch: true }),
+
+  platformJobs: (limit = 20) =>
+    call<PlatformJob[]>(`/admin/platform/jobs?limit=${limit}`),
+  platformJobDetail: (jobId: string) =>
+    call<PlatformJobDetail>(`/admin/platform/jobs/${jobId}`),
+  platformJobErrors: (jobId: string, limit = 50) =>
+    call<PlatformErrorsResult>(`/admin/platform/jobs/${jobId}/errors?limit=${limit}`),
+  cancelPlatformJob: (jobId: string) =>
+    post(`/admin/platform/jobs/${jobId}/cancel`),
 };
